@@ -69,6 +69,7 @@ import app.gamenative.BuildConfig;
 import app.gamenative.PluviaApp;
 import app.gamenative.events.AndroidEvent;
 import app.gamenative.service.SteamService;
+import app.gamenative.translation.TranslationStackApplier;
 
 public class BionicProgramLauncherComponent extends GuestProgramLauncherComponent {
     private String guestExecutable;
@@ -453,6 +454,14 @@ public class BionicProgramLauncherComponent extends GuestProgramLauncherComponen
         if (this.envVars != null) {
             envVars.putAll(this.envVars);
         }
+
+        // 多重翻訳の除去: ここまでで box64/FEXCore と DXVK/VKD3D の環境変数が「両方」積まれている。
+        // 実際に使われる 1 系統だけを残す（例: arm64ec + FEXCore なら BOX64_* を落とす）。
+        TranslationStackApplier.applyToFinalEnv(
+                container,
+                envVars,
+                wineInfo != null && wineInfo.isArm64EC(),
+                container != null ? container.getDXWrapper() : null);
 
         // Code-map capture (input for offline code caches, uploaded after exit) is decided here, after
         // every preset and container variable has been merged, so nothing can override the gate.
