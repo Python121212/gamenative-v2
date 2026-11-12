@@ -142,14 +142,15 @@ jobs:
       - name: Verify APK signing key is stable
         if: success()
         run: |
-          EXPECTED="85:D8:C9:35:B6:83:91:AF:20:9B:7D:45:98:AE:1B:AC:3E:06:90:F2"
+          # 小文字・コロン無しで返るので、比較はコロンを落とした大文字で行う。
+          EXPECTED=$(echo "85:D8:C9:35:B6:83:91:AF:20:9B:7D:45:98:AE:1B:AC:3E:06:90:F2" | tr -d ':')
           APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)"
           APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
           if [ -z "$APK" ] || [ -z "$APKSIGNER" ]; then
             echo "::warning::APK または apksigner が見つからないため署名を確認できません"
             exit 0
           fi
-          ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" | grep -i 'SHA-1 digest' | head -1 | sed 's/.*: //' | tr 'a-f' 'A-F')
+          ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" | grep -i 'SHA-1 digest' | head -1 | sed 's/.*: //' | tr -d ':' | tr 'a-f' 'A-F')
           echo "APK SHA-1: $ACTUAL"
           echo "expected : $EXPECTED"
           if [ "$ACTUAL" != "$EXPECTED" ]; then
