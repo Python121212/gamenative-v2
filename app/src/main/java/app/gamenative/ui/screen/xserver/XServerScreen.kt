@@ -81,6 +81,7 @@ import app.gamenative.R
 import app.gamenative.optimize.OptimizeCards
 import app.gamenative.optimize.OptimizeController
 import app.gamenative.shadercache.FossilizeManager
+import app.gamenative.aidiag.DiagnosisService
 import app.gamenative.translation.TranslationStackApplier
 import app.gamenative.translation.TranslationStackResolver
 import app.gamenative.ui.util.applyScreenEffectsConfig
@@ -4750,6 +4751,13 @@ private fun setupXEnvironment(
         }
         if (status != 0) {
             Timber.e("Guest program terminated with status: $status")
+            // 異常終了を自動診断（端末内のルール判定 → 設定があれば AI）。起動/終了はブロックしない。
+            DiagnosisService.requestDiagnosis(
+                context = context,
+                container = container,
+                exitReason = "exit_$status",
+                tail = GuestOutputTail.snapshot(),
+            )
             onGameLaunchError?.invoke("Game terminated with error status: $status")
         }
         PluviaApp.events.emit(AndroidEvent.GuestProgramTerminated)

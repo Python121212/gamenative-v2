@@ -103,10 +103,11 @@ jobs:
           esac 2>&1 | tee gradle-build.log
 
       # The unit-test sources are not part of assembleDebug: compile them, and run the
-      # translation-stack suite so a regression in layer de-duplication fails here.
-      - name: Translation stack unit tests
+      # translation-stack and AI-diagnosis suites so a regression in layer de-duplication
+      # or in the diagnosis rules fails here (both run offline, no network).
+      - name: Unit tests (translation stack + AI diagnosis)
         if: inputs.variant == 'legacy'
-        run: ./gradlew :app:compileLegacyDebugUnitTestKotlin :app:testLegacyDebugUnitTest --tests "app.gamenative.translation.*"
+        run: ./gradlew :app:compileLegacyDebugUnitTestKotlin :app:testLegacyDebugUnitTest --tests "app.gamenative.translation.*" --tests "app.gamenative.aidiag.*"
 
       # Surface Kotlin/Gradle errors as check annotations so they can be read
       # through the API even when the raw log download is unavailable.

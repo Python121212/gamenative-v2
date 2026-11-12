@@ -141,6 +141,19 @@ android {
         buildConfigField("String", "REVENUECAT_API_KEY", "\"${secret("REVENUECAT_API_KEY").ifEmpty { "goog_iCoffJTvTFYjqalcgCdtXDErPQa" }}\"")
         buildConfigField("String", "STEAMGRIDDB_API_KEY", "\"${secret("STEAMGRIDDB_API_KEY")}\"")
         buildConfigField("String", "CLOUD_PROJECT_NUMBER", "\"${secret("CLOUD_PROJECT_NUMBER")}\"")
+        // AI error diagnosis (OpenAI-compatible). Empty key = rule-based diagnosis only,
+        // which is the safe default: nothing leaves the device unless a key is configured.
+        buildConfigField(
+            "String",
+            "AI_DIAGNOSTICS_ENDPOINT",
+            "\"${secret("AI_DIAGNOSTICS_ENDPOINT").ifEmpty { "https://api.openai.com/v1/chat/completions" }}\"",
+        )
+        buildConfigField(
+            "String",
+            "AI_DIAGNOSTICS_MODEL",
+            "\"${secret("AI_DIAGNOSTICS_MODEL").ifEmpty { "gpt-4o-mini" }}\"",
+        )
+        buildConfigField("String", "AI_DIAGNOSTICS_API_KEY", "\"${secret("AI_DIAGNOSTICS_API_KEY")}\"")
         val iconValue = "@mipmap/ic_launcher"
         val iconRoundValue = "@mipmap/ic_launcher_round"
         manifestPlaceholders.putAll(

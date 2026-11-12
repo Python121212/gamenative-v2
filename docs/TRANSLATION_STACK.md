@@ -137,3 +137,10 @@ TranslationStack: ICD を 1 つに固定: VK_ICD_FILENAMES=/data/share/vulkan/ic
   計画を保存して UI で可視化すれば、ユーザーが「どの翻訳を通っているか」を選べるようになる。
 - **テスト**: `app/src/test/java/app/gamenative/translation/TranslationStackResolverTest.kt` が
   多重化の判定・除去・競合記録を端末なしで検証する。新しいレイヤーを足すときは、まずここにケースを足す。
+
+## 起動に失敗したとき
+
+翻訳段の設定は「なぜ落ちたか」の主要な原因になる（ドライバ／翻訳層の組み合わせ、未対応命令など）。
+異常終了時は `CrashFingerprint` と `RuleDiagnoser` がその組み合わせを判定し、
+上の表にある設定（`graphicsDriver` / `dxwrapper` / `emulator` など）を対処として提示する。
+詳細は [AI_DIAGNOSTICS.md](AI_DIAGNOSTICS.md)。
