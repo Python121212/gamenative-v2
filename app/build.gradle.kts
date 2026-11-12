@@ -32,7 +32,7 @@ val localProperties: Properties = Properties().apply {
     }
 }
 
-private const val QUOTE = "\""
+val QUOTE = "\""
 
 fun configValue(name: String): String =
     (project.findProperty(name) as String?)
