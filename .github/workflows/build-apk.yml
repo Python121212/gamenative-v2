@@ -50,12 +50,20 @@ jobs:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
         run: |
-          cat <<EOF > local.properties
-          POSTHOG_API_KEY=dummy
-          POSTHOG_HOST=https://us.i.posthog.com
-          GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID
-          GOOGLE_OAUTH_CLIENT_SECRET=$GOOGLE_OAUTH_CLIENT_SECRET
-          EOF
+          # Never write empty values: the secrets plugin turns every entry of
+          # local.properties into a BuildConfig field, and an empty one is
+          # invalid Java (`= ;`).
+          {
+            echo "POSTHOG_API_KEY=dummy"
+            echo "POSTHOG_HOST=https://us.i.posthog.com"
+            if [ -n "$GOOGLE_OAUTH_CLIENT_ID" ]; then
+              echo "GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID"
+            fi
+            if [ -n "$GOOGLE_OAUTH_CLIENT_SECRET" ]; then
+              echo "GOOGLE_OAUTH_CLIENT_SECRET=$GOOGLE_OAUTH_CLIENT_SECRET"
+            fi
+          } > local.properties
+          sed 's/=.*/=<set>/' local.properties
 
       - name: Install Android SDK components
         run: |
