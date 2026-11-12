@@ -111,23 +111,23 @@ jobs:
 
       # Surface Kotlin/Gradle errors as check annotations so they can be read
       # through the API even when the raw log download is unavailable.
+      # GitHub allows ~10 error annotations per step, so keep this list short and specific.
       - name: Report build errors
         if: failure()
         run: |
-          emit() { echo "::error::$1"; }
+          emit() { printf '::error::%s\n' "$(printf '%s' "$1" | tr '%\r\n' '    ')"; }
           emit "HEAD=$(git rev-parse --short HEAD) $(git log -1 --format=%s)"
-          grep -n 'GOOGLE_OAUTH' app/build.gradle.kts | while IFS= read -r l; do emit "GRADLE| $l"; done
-          BC="app/build/generated/source/buildConfig/legacy/debug/app/gamenative/BuildConfig.java"
-          if [ -f "$BC" ]; then
-            sed -n '13,22p' "$BC" | while IFS= read -r l; do emit "BC| $l"; done
-          else
-            emit "BC| (not generated)"
-          fi
           if [ -f gradle-build.log ]; then
-            awk '/^e: /{n++} n>0 && n<=6 {print}' gradle-build.log | head -n 40 | while IFS= read -r line; do
-              emit "$(printf '%s' "$line" | tr '%\r\n' '    ')"
-            done
-            tail -n 30 gradle-build.log
+            echo "log lines: $(wc -l < gradle-build.log)"
+            PATTERN='^e: |error:|What went wrong|Execution failed for task|FAILURE:|Caused by:|Java heap space'
+            if grep -qE "$PATTERN" gradle-build.log; then
+              grep -nE "$PATTERN" gradle-build.log | head -n 10 | while IFS= read -r line; do emit "$line"; done
+            else
+              # Nothing matched: the last lines still show which task failed.
+              tail -n 10 gradle-build.log | while IFS= read -r line; do emit "TAIL| $line"; done
+            fi
+          else
+            emit "gradle-build.log が見つかりません"
           fi
 
       - name: List APKs
