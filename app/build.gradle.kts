@@ -75,7 +75,17 @@ val hasCiDebugKeystore: Boolean = ciDebugKeystore.isFile
 // 「まず動く APK が欲しい」ときはこれで数分で作れる（配布物には使わない）。
 val fastRelease: Boolean = providers.gradleProperty("fastRelease").isPresent
 
-val driveOauthClientId: String = configValue("GOOGLE_OAUTH_CLIENT_ID")
+// Google Drive pseudo-SSD は**既定で有効**。何も設定しなくても、ビルドした APK で
+// 「設定 → ストレージ → Google Drive 疑似SSD → Googleアカウントを追加」が使える。
+// 上書きは Gradle プロパティ / 環境変数 / local.properties / GitHub Secrets の
+// GOOGLE_OAUTH_CLIENT_ID（configValue の順で優先される）。
+//
+// クライアントIDは秘密情報ではない（APK に埋め込まれる公開値）。有効になるのは
+// Google Cloud に登録したパッケージ名 + SHA-1 で署名された APK だけなので、
+// 別の鍵で署名したビルドでは従来どおりログインできない（docs/BUILD_SIGNING.md）。
+val defaultDriveOauthClientId = "1065217572613-v0jnje89ufjuek88sgmfc2kip3rfcenl.apps.googleusercontent.com"
+
+val driveOauthClientId: String = configValue("GOOGLE_OAUTH_CLIENT_ID").ifEmpty { defaultDriveOauthClientId }
 
 /** `com.googleusercontent.apps.<client-id>` or a harmless fallback. */
 val driveOauthScheme: String = if (driveOauthClientId.isNotBlank()) {
@@ -90,6 +100,9 @@ val driveOauthAssetsPath: String = driveOauthAssetDir.get().asFile.absolutePath
 val generateDriveOauthConfig = tasks.register("generateDriveOauthConfig") {
     val outputDir = driveOauthAssetDir
     val clientId = driveOauthClientId
+    // クライアントIDを入力として宣言する。これが無いと ID を変えても
+    // UP-TO-DATE と判定され、古い drive_oauth.json が APK に残る。
+    inputs.property("clientId", clientId)
     outputs.dir(outputDir)
     doLast {
         val file = outputDir.get().file("drive_oauth.json").asFile
