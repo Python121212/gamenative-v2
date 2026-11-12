@@ -72,9 +72,9 @@ class DriveApiClient(
         val folderId = ensureRootFolder() ?: return@withContext null
 
         val metadata = File().apply {
-            name = displayName
-            parents = listOf(folderId)
-            if (mimeType != null) this.mimeType = mimeType
+            setName(displayName)
+            setParents(listOf(folderId))
+            if (mimeType != null) setMimeType(mimeType)
         }
 
         val mediaContent = FileContent(
@@ -124,7 +124,9 @@ class DriveApiClient(
             val metadata = exec(
                 service.files().get(driveFileId).setFields("size"),
             )
-            val total = metadata?.size ?: -1L
+            // Drive model File implements Map, so `size` would resolve to the
+            // map entry count; use the explicit getter for the byte size.
+            val total: Long = metadata?.getSize() ?: -1L
 
             var downloaded = 0L
             service.files().get(driveFileId).executeMediaAndDownloadTo(
