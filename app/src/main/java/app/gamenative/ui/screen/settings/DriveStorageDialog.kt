@@ -23,7 +23,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -73,10 +72,7 @@ fun DriveStorageDialog(
     var error by remember { mutableStateOf<String?>(null) }
     var autoUpload by remember { mutableStateOf(PrefManager.drivePseudoSsdEnabled) }
 
-    var clientId by remember { mutableStateOf(DriveOAuthClient.clientId(context)) }
-    var clientSecret by remember { mutableStateOf(DriveOAuthClient.clientSecret(context)) }
-    var configured by remember { mutableStateOf(DriveOAuthClient.isConfigured(context)) }
-    var showConfig by remember { mutableStateOf(!configured) }
+    val configured = remember { DriveOAuthClient.isConfigured(context) }
     val configRequiredMessage = stringResource(R.string.drive_config_required)
 
     fun startSignIn() {
@@ -145,7 +141,6 @@ fun DriveStorageDialog(
                             if (configured) {
                                 startSignIn()
                             } else {
-                                showConfig = true
                                 error = configRequiredMessage
                             }
                         },
@@ -166,51 +161,14 @@ fun DriveStorageDialog(
                     )
                 }
 
-                // --- OAuth client (only needed when not baked into the build) --
-                if (showConfig && !busy) {
+                // --- Build-time OAuth client status --------------------------
+                if (!configured && !busy) {
                     Text(
                         text = stringResource(R.string.drive_config_hint),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 12.dp),
+                        modifier = Modifier.padding(top = 10.dp),
                     )
-                    OutlinedTextField(
-                        value = clientId,
-                        onValueChange = { clientId = it },
-                        label = { Text(stringResource(R.string.drive_config_client_id)) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 6.dp),
-                    )
-                    OutlinedTextField(
-                        value = clientSecret,
-                        onValueChange = { clientSecret = it },
-                        label = { Text(stringResource(R.string.drive_config_client_secret)) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 6.dp),
-                    )
-                    TextButton(
-                        onClick = {
-                            DriveOAuthClient.saveConfig(clientId, clientSecret)
-                            configured = DriveOAuthClient.isConfigured(context)
-                            if (configured) {
-                                showConfig = false
-                                startSignIn()
-                            } else {
-                                error = null
-                            }
-                        },
-                        modifier = Modifier.padding(top = 4.dp),
-                    ) {
-                        Text(stringResource(R.string.drive_config_save))
-                    }
-                } else if (configured) {
-                    TextButton(onClick = { showConfig = !showConfig }, modifier = Modifier.padding(top = 4.dp)) {
-                        Text(stringResource(R.string.drive_config_edit))
-                    }
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
