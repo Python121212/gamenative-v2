@@ -3296,4 +3296,24 @@
     <string name="support_wait_stop">停止</string>
     <string name="support_reply_ready_tap">タップして読む。</string>
     <string name="support_notify_me">返信が届いたら通知する</string>
+
+    <!-- Google Drive pseudo-SSD -->
+    <string name="settings_drive_storage_title">Google Drive 疑似SSD</string>
+    <string name="settings_drive_storage_empty">アカウント未登録 · 1アカウント 15GB</string>
+    <string name="settings_drive_storage_summary">%1$dアカウント · %3$s中 %2$s使用</string>
+    <string name="drive_dialog_title">Google Drive 疑似SSD</string>
+    <string name="drive_dialog_subtitle">書き終えたファイルやフォルダーを順番にGoogle Driveへ保存します。アカウントを複数登録すると、1アカウントにつき15GBずつ容量を増やせます。</string>
+    <string name="drive_total_summary">%1$dアカウント · %3$s中 %2$s使用</string>
+    <string name="drive_add_account">Googleアカウントを追加</string>
+    <string name="drive_account_used">%2$s中 %1$s使用</string>
+    <string name="drive_remove_account">削除</string>
+    <string name="drive_files_title">保存済みの項目</string>
+    <string name="drive_files_empty">まだアップロードされたファイルはありません。</string>
+    <string name="drive_state_queued">待機中</string>
+    <string name="drive_state_uploading">アップロード中</string>
+    <string name="drive_state_stored">保存済み</string>
+    <string name="drive_state_failed">アップロード失敗</string>
+    <string name="drive_state_deleted">削除済み</string>
+    <string name="drive_action_restore">復元</string>
+    <string name="drive_auto_upload">書き終えたファイルを自動でアップロード</string>
 </resources>

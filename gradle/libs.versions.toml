@@ -43,6 +43,9 @@ spongycastle = "1.58.0.0" # https://mvnrepository.com/artifact/com.madgag.spongy
 timber = "5.0.1" # https://mvnrepository.com/artifact/com.jakewharton.timber/timber
 zstd-jni = "1.5.7-5" # https://mvnrepository.com/artifact/com.github.luben/zstd-jni
 zxing = "3.5.3" # https://mvnrepository.com/artifact/com.google.zxing/core
+playServicesAuth = "21.3.0" # https://mvnrepository.com/artifact/com.google.android.gms/play-services-auth
+googleApiServicesDrive = "v3-rev20240930-2.0.0" # https://mvnrepository.com/artifact/com.google.apis/google-api-services-drive
+googleHttpClientGson = "1.43.3" # https://mvnrepository.com/artifact/com.google.http-client/google-http-client-gson
 
 [libraries]
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
@@ -95,6 +98,9 @@ spongycastle = { group = "com.madgag.spongycastle", name = "prov", version.ref =
 timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "timber" }
 zstd-jni = { group = "com.github.luben", name = "zstd-jni", version.ref = "zstd-jni" }
 zxing = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
+play-services-auth = { module = "com.google.android.gms:play-services-auth", version.ref = "playServicesAuth" }
+google-api-services-drive = { module = "com.google.apis:google-api-services-drive", version.ref = "googleApiServicesDrive" }
+google-http-client-gson = { module = "com.google.http-client:google-http-client-gson", version.ref = "googleHttpClientGson" }
 
 # Testing
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
@@ -179,4 +185,7 @@ javasteam-dev = [
 google = [
     "feature-delivery",
     "play-integrity",
+    "play-services-auth",
+    "google-api-services-drive",
+    "google-http-client-gson",
 ]

@@ -1673,6 +1673,14 @@ object PrefManager {
             setPref(SAVE_BACKUPS_TO_KEEP, value)
         }
 
+    private val DRIVE_PSEUDO_SSD_ENABLED = booleanPreferencesKey("drive_pseudo_ssd_enabled")
+    /** When enabled, finished files (e.g. save backups) are queued to Drive. */
+    var drivePseudoSsdEnabled: Boolean
+        get() = getPref(DRIVE_PSEUDO_SSD_ENABLED, false)
+        set(value) {
+            setPref(DRIVE_PSEUDO_SSD_ENABLED, value)
+        }
+
     private val USE_EXTERNAL_STORAGE = booleanPreferencesKey("use_external_storage")
     var useExternalStorage: Boolean
         get() = getPref(USE_EXTERNAL_STORAGE, false)

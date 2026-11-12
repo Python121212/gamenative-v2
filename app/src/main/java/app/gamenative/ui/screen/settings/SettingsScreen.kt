@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ManageAccounts
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
@@ -148,6 +149,15 @@ private fun SettingsScreenContent(
                     iconTint = PluviaTheme.colors.accentCyan,
                 ) {
                     SettingsGroupAccounts()
+                }
+
+                // Google Drive pseudo-SSD section
+                SettingsSection(
+                    title = stringResource(R.string.settings_storage_title),
+                    icon = Icons.Default.CloudUpload,
+                    iconTint = PluviaTheme.colors.accentCyan,
+                ) {
+                    SettingsGroupDriveStorage()
                 }
 
                 // Performance section
