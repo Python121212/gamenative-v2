@@ -95,7 +95,7 @@ class DriveApiClient(
                 coroutineContext.ensureActive()
                 val total = localFile.length().coerceAtLeast(1L)
                 val state = current.uploadState
-                if (state == UploadState.IN_PROGRESS) {
+                if (state == UploadState.MEDIA_IN_PROGRESS) {
                     onProgress((current.numBytesUploaded.toFloat() / total).coerceIn(0f, 1f))
                 } else if (state == UploadState.MEDIA_COMPLETE) {
                     onProgress(1f)

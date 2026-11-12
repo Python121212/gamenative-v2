@@ -77,14 +77,19 @@ jobs:
         if: failure()
         run: |
           if [ ! -f gradle-build.log ]; then exit 0; fi
-          grep -E "^(e: )|error:|Could not resolve|Could not find|Could not GET|Required by:|No matching variant|com\.google|com\.android\.gms|FAILURE:|> Task .* FAILED" gradle-build.log \
-            | head -n 60 \
-            | while IFS= read -r line; do
-                escaped=$(printf '%s' "$line" | tr '%\r\n' '   ')
-                echo "::error::$escaped"
-              done
-          echo "--- tail ---"
-          tail -n 60 gradle-build.log
+          # Emit Kotlin/Gradle errors (with their continuation lines) as check
+          # annotations so they can be read through the API.
+          awk '/^e: /{n++} n>0 && n<=8 {print}' gradle-build.log | head -n 60 | \
+            while IFS= read -r line; do
+              escaped=$(printf '%s' "$line" | tr '%\r\n' '    ')
+              echo "::error::$escaped"
+            done
+          grep -E "Could not resolve|Could not find|Required by:|FAILURE:|What went wrong" gradle-build.log | head -n 10 | \
+            while IFS= read -r line; do
+              escaped=$(printf '%s' "$line" | tr '%\r\n' '    ')
+              echo "::error::$escaped"
+            done
+          tail -n 40 gradle-build.log
 
       - name: List APKs
         run: find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
