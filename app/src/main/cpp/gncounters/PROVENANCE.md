@@ -1,15 +1,18 @@
-# libgncounters.so provenance
+# libgncounters.so の由来
 
-`app/src/main/jniLibs/arm64-v8a/libgncounters.so` is a prebuilt (the app does not run CMake during packaging),
-built from the sources in this directory:
+`app/src/main/jniLibs/arm64-v8a/libgncounters.so` はビルド済みバイナリです（アプリはパッケージ時に
+CMake を実行しません）。このディレクトリのソースからビルドしています:
 
-- sha256: `f4355e4a2e22c6f41a61df8dc2cf15d3e67e320ec67d74bacf53ab136f5a9f65` (1,187,456 bytes)
-- Arm libGPUCounters tag `2.5.0`, commit `378c7b59e2dae87cbbffb0ac9cf96ed13c939823`
-  (https://github.com/ARM-software/libGPUCounters, MIT, see `LICENSE-libGPUCounters.md`), linked statically
-- NDK 27.3.13750724, arm64-v8a, android-26, c++_static, MinSizeRel, `-z max-page-size=16384`, stripped
-- build: `app/src/main/cpp/gncounters/build.sh`, then
+- sha256: `f4355e4a2e22c6f41a61df8dc2cf15d3e67e320ec67d74bacf53ab136f5a9f65`（1,187,456 バイト）
+- Arm libGPUCounters タグ `2.5.0`、コミット `378c7b59e2dae87cbbffb0ac9cf96ed13c939823`
+  （https://github.com/ARM-software/libGPUCounters、MIT、`LICENSE-libGPUCounters.md` 参照）を
+  静的リンク
+- NDK 27.3.13750724、arm64-v8a、android-26、c++_static、MinSizeRel、`-z max-page-size=16384`、
+  ストリップ済み
+- ビルド: `app/src/main/cpp/gncounters/build.sh` を実行後、
   `cp app/src/main/cpp/gncounters/out/libgncounters.so app/src/main/jniLibs/arm64-v8a/`
 
-`build.sh` clones libGPUCounters into `third_party/` (ignored), refuses any other or modified checkout, and the
-build is reproducible: a rebuild yields the same sha256. Only dependencies: liblog, libm, libdl, libc.
-Exports only the four `Java_app_gamenative_powercontrol_metrics_MaliGpuCounters_*` entry points.
+`build.sh` は libGPUCounters を `third_party/`（gitignore 対象）にクローンし、それ以外や改変された
+チェックアウトは拒否します。ビルドは再現可能で、再ビルドしても同じ sha256 になります。依存は
+liblog、libm、libdl、libc のみです。エクスポートするのは 4 つの
+`Java_app_gamenative_powercontrol_metrics_MaliGpuCounters_*` エントリポイントのみです。

@@ -1,309 +1,303 @@
 # gn-download
 
-GameNative's native download engine (Rust, JNI, `libgndownload.so`). One crate serves all
-four stores — Steam, GOG, Epic, Amazon — sharing a common fetch core (`fetch_core.rs`), a
-memory-budgeted adaptive window, per-host concurrency caps, retry/rotation policy, and a
-shared ordered-write model.
+GameNative のネイティブダウンロードエンジンです（Rust、JNI、`libgndownload.so`）。1 つのクレートで
+4 つのストア（Steam、GOG、Epic、Amazon）すべてに対応し、共通の取得コア（`fetch_core.rs`）、
+メモリ予算付きの適応ウィンドウ、ホスト単位の同時接続上限、再試行／ローテーションの方針、
+共通の順序付き書き込みモデルを共有しています。
 
-This README is the map of how the whole thing fits together.
+この README は、全体がどう組み合わさっているかの地図です。
 
-## Layout
+## 構成
 
-| Path | Role |
+| パス | 役割 |
 |---|---|
-| `fetch_core.rs` | Shared HTTP engine: adaptive in-flight window, byte budget, per-host caps, retries, backoff, stall detection |
-| `queue_delay.rs` | LEDBAT (RFC 6817) queueing-delay estimator: TCP-connect RTT prober + base-delay history, shared by both window controllers |
-| `store_dl/ordered_drain.rs` | Shared per-file ordered writer used by GOG and Epic (the Steam model): pending BTreeMap + cursor + coalesced 16 MiB batches + **Verified markers** |
-| `store_dl/steam/depot_downloader.rs` | Steam orchestration: manifests, depot keys, DLC/redist depots, cache validation |
-| `store_dl/steam/depot_writer.rs` | Steam depot pipeline: verify/resume, chunk dispatch, ordered writes, stall watchdog |
-| `store_dl/steam/cdn_client.rs` / `cdn_probe.rs` | Steam CDN client (manifest/chunk GETs) and throughput-based server probing (spawned lazily on the first downloaded byte) |
-| `store_dl/steam/depot_chunk.rs` / `crypto.rs` | Steam chunk decrypt + decompress (`content_manifest.rs`, `proto_wire.rs` + `pb/` parse the manifests; `depot_config.rs` is the manifest store — see §4) |
-| `store_dl/gog/` | GOG engine (gen1 range-GETs + gen2 chunked galaxy builds, multi-mirror CDN pool) |
-| `store_dl/epic/` | Epic engine (per-(file, part) fetching, streamed writes, selective verified resume) |
-| `store_dl/amazon.rs` | Amazon engine (whole-file streaming) |
-| `store_dl/*/jni.rs` | JNI entry points called from Kotlin |
+| `fetch_core.rs` | 共通 HTTP エンジン: 適応的な処理中ウィンドウ、バイト予算、ホスト単位の上限、再試行、バックオフ、停止検出 |
+| `queue_delay.rs` | LEDBAT（RFC 6817）待ち行列遅延の推定器: TCP 接続 RTT のプローブと基準遅延の履歴。両方のウィンドウ制御が共有 |
+| `store_dl/ordered_drain.rs` | GOG と Epic が使う共有のファイル単位順序付きライター（Steam モデル）: 保留用 BTreeMap + カーソル + 16 MiB の結合バッチ + **Verified マーカー** |
+| `store_dl/steam/depot_downloader.rs` | Steam の制御: マニフェスト、depot キー、DLC／再配布 depot、キャッシュ検証 |
+| `store_dl/steam/depot_writer.rs` | Steam depot のパイプライン: 検証／再開、チャンクのディスパッチ、順序付き書き込み、停止監視 |
+| `store_dl/steam/cdn_client.rs` / `cdn_probe.rs` | Steam CDN クライアント（マニフェスト／チャンクの GET）とスループットベースのサーバープローブ（最初のダウンロードバイトで遅延起動） |
+| `store_dl/steam/depot_chunk.rs` / `crypto.rs` | Steam チャンクの復号と展開（`content_manifest.rs`、`proto_wire.rs` と `pb/` がマニフェストを解析。`depot_config.rs` はマニフェストストア — §4 参照） |
+| `store_dl/gog/` | GOG エンジン（gen1 のレンジ GET + gen2 のチャンク型 galaxy ビルド、複数ミラーの CDN プール） |
+| `store_dl/epic/` | Epic エンジン（(ファイル, パート) 単位の取得、ストリーム書き込み、選択的な検証付き再開） |
+| `store_dl/amazon.rs` | Amazon エンジン（ファイル全体のストリーミング） |
+| `store_dl/*/jni.rs` | Kotlin から呼ばれる JNI エントリポイント |
 
-Every store lives under `store_dl/`; only genuinely shared plumbing (`fetch_core`, `md5_small`,
-`tree_delete`) stays at the crate root. **No store uses temp files**: every byte is written
-directly to the final target file (see §2) and verified in place.
+すべてのストアは `store_dl/` 配下にあります。本当に共通の配管（`fetch_core`、`md5_small`、
+`tree_delete`）だけがクレートのルートに残ります。**どのストアも一時ファイルを使いません** —
+すべてのバイトは最終的な対象ファイルへ直接書かれ（§2 参照）、その場で検証されます。
 
-## 1. Encryption & integrity per store
+## 1. ストアごとの暗号化と完全性
 
-The stores differ fundamentally here; there is no shared crypto layer beyond Steam's.
+ここは根本的に異なります。Steam 以外に共有の暗号レイヤーはありません。
 
-- **Steam** — every depot chunk is **AES-256 encrypted**: the first 16 bytes are the
-  AES-256-ECB(key)-wrapped IV, the rest is AES-256-CBC ciphertext (`crypto.rs`,
-  `depot_chunk.rs::steam_symmetric_decrypt`). The depot key is a per-depot symmetric key
-  obtained from Steam over the authenticated CM session (request via the owning app — see
-  *Verify & update* below). After decryption the payload is **VZip/LZMA or plain-zip**
-  compressed and decompressed to the manifest's expected size. Integrity comes from the
-  manifest: each chunk has a SHA-1 the writer verifies after decompress.
-- **GOG** — **no payload encryption**; integrity is **MD5**. gen2 chunks carry a compressed
-  MD5 and an uncompressed MD5 (checked before and after zlib inflate); each completed file is
-  re-hashed whole (MD5) in place before it counts as done.
-- **Epic** — **no payload encryption**; integrity is **SHA-1** per chunk (from the binary
-  manifest), checked after the 41-byte chunk header parse and optional zlib inflate.
-- **Amazon** — **no payload encryption**; integrity is **SHA-256** per *whole file*, streamed
-  while downloading; a mismatch deletes the file and is retryable.
+- **Steam** — すべての depot チャンクが **AES-256 で暗号化**されています。先頭 16 バイトが
+  AES-256-ECB(key) でラップされた IV、残りが AES-256-CBC の暗号文です（`crypto.rs`、
+  `depot_chunk.rs::steam_symmetric_decrypt`）。depot キーは depot ごとの対称鍵で、認証済みの CM
+  セッション経由で Steam から取得します（所有アプリを通じて要求 — 後述の *検証と更新* 参照）。
+  復号後、ペイロードは **VZip/LZMA または plain-zip** で圧縮されており、マニフェストの期待サイズまで
+  展開します。完全性はマニフェストで担保され、各チャンクの SHA-1 を展開後にライターが検証します。
+- **GOG** — **ペイロードの暗号化はなし**。完全性は **MD5** です。gen2 チャンクは圧縮データの MD5 と
+  非圧縮データの MD5 を持ち（zlib inflate の前後で検査）、完了した各ファイルは全体を MD5 で
+  再ハッシュしてから完了とみなします。
+- **Epic** — **ペイロードの暗号化はなし**。完全性は **チャンク単位の SHA-1**（バイナリマニフェスト
+  由来）で、41 バイトのチャンクヘッダー解析と任意の zlib inflate の後に検査します。
+- **Amazon** — **ペイロードの暗号化はなし**。完全性は **ファイル全体単位の SHA-256** で、
+  ダウンロードしながらストリームで計算します。不一致ならファイルを削除し、再試行可能です。
 
-In all cases transport security is HTTPS (rustls, device CA bundle passed in from Kotlin).
+いずれの場合も転送は HTTPS（rustls、端末の CA バンドルを Kotlin から渡す）です。
 
-## 2. Download flow — sorting and sequential writes
+## 2. ダウンロードの流れ — 並べ替えと逐次書き込み
 
-Every store writes files **sequentially, append-only, never past the end of written data**.
-This is a hard design rule born from a real device failure: positioned `pwrite` far past EOF
-on exFAT/FUSE SD cards forces the filesystem to zero-fill the gap, which wedges all writers
-(the "511 MB freeze"). No preallocation (`set_len`) is used anywhere for the same reason.
+すべてのストアはファイルを **逐次・追記のみ・書き込み済みの末尾を超えない**形で書きます。これは実際の
+端末で起きた障害から生まれた設計上の厳格なルールです。exFAT/FUSE の SD カード上で EOF よりずっと先に
+`pwrite` すると、ファイルシステムが隙間をゼロ埋めし、すべての書き手が固まります（「511 MB フリーズ」）。
+同じ理由で事前確保（`set_len`）も一切使いません。
 
-- **Steam** (`depot_writer.rs`): per file, chunk jobs are **sorted by offset before dispatch**
-  (`by_offset.sort_by_key`). Arrivals park in a `BTreeMap<offset, entry>` per file; the
-  writer drains the contiguous prefix from the cursor, coalescing up to 16 MiB per pwrite at
-  the current EOF. File handles are opened lazily on first touch and closed on completion,
-  so peak fd usage is bounded by the active window, not the file count. The layout pass
-  creates only directories and symlinks — regular files are created on first write (and
-  0-chunk files at finalize), so download start and later deletion stay cheap on
-  FUSE/sdcardfs even for many-thousand-file depots.
+- **Steam**（`depot_writer.rs`）: ファイルごとに、チャンクジョブは**ディスパッチ前にオフセットで
+  ソート**されます（`by_offset.sort_by_key`）。到着したものはファイルごとの
+  `BTreeMap<offset, entry>` に置かれ、ライターはカーソルから連続する先頭部分を吸い出し、現在の EOF に
+  対して最大 16 MiB をまとめて pwrite します。ファイルハンドルは最初の書き込み時に遅延オープンし、
+  完了時にクローズするため、fd のピーク使用量はファイル数ではなくアクティブウィンドウで抑えられます。
+  レイアウトのパスはディレクトリとシンボリックリンクのみを作成し、通常ファイルは最初の書き込み時に
+  （0 チャンクのファイルは finalize 時に）作成されるので、数千ファイルの depot でもダウンロード開始と
+  その後の削除は FUSE/sdcardfs 上で軽いままです。
 
-**Pre-pass cost (verify/update start-up).** Before a depot's first chunk, Steam resolves every
-manifest path to its on-disk spelling and stats every file — both before the first `onVerifying`
-status can be reported, so they are the window in which a verify/update looks "stuck" before the
-UI shows anything (the directory layout is created *after* that first `(0, N)` status). This is
-metadata-bound work, so it is exactly what device storage punishes.
+**事前パスのコスト（検証／更新の開始時）。** depot の最初のチャンクの前に、Steam はすべての
+マニフェストパスをディスク上の表記に解決し、すべてのファイルを stat します。これは最初の
+`onVerifying` ステータスを報告する前に行われるため、UI に何も出る前の「止まっている」ように見える
+区間になります（ディレクトリレイアウトはその最初の `(0, N)` ステータスの*後*に作られます）。これは
+メタデータに依存する処理で、まさに端末ストレージが苦手とするものです。
 
-Two things keep it minimal. `DepotFiles::prepare` reuses the paths `plan_depot_write` already
-resolved instead of walking the tree a second time, and path resolution itself is cached:
-`CaseResolver` (`store_dl/mod.rs`) still checks each component with one `exists()` stat (the
-exact-spelling fast path that hits for every already-correct path), but a component that does
-**not** exist with the manifest's spelling is answered from a per-directory case-folded listing
-cached once per pass — where the old code scanned the parent directory again for every such
-component, i.e. once per new file of an update. Measured on a 40k-file tree, plan+prepare:
+これを最小限に保つ仕組みが 2 つあります。`DepotFiles::prepare` は `plan_depot_write` が既に解決した
+パスを再利用してツリーを二度歩かないようにし、パス解決自体もキャッシュされます。`CaseResolver`
+（`store_dl/mod.rs`）は各要素を 1 回の `exists()` stat で確認します（既に正しいパスでは必ず当たる
+高速経路）。一方、マニフェストの表記では存在**しない**要素については、パスごとに 1 回キャッシュした
+ディレクトリ単位の大文字小文字を畳んだ一覧から答えます。以前のコードはそうした要素ごとに親
+ディレクトリを再スキャンしていた、つまり更新の新しいファイル 1 つにつき 1 回スキャンしていました。
+4 万ファイルのツリーでの実測（plan + prepare）:
 
-| case | before | after |
+| ケース | 変更前 | 変更後 |
 |---|---|---|
-| verify (every file already on disk) | 296 ms | 182 ms |
-| update (10% of the manifest is new) | 265 ms | 163 ms |
+| 検証（全ファイルが既にディスク上） | 296 ms | 182 ms |
+| 更新（マニフェストの 10% が新規） | 265 ms | 163 ms |
 
-…against a 48 ms floor for the one stat per file that cannot be avoided. The verify counter is
-published as soon as the candidate count is known — before the layout pass — as `(0, N)`.
-- **GOG** (`store_dl/gog/engine.rs`): chunks inflate into an in-memory buffer first
-  (MD5-verified), then only *verified* chunks enter the file's `OrderedDrain`
-  (`store_dl/ordered_drain.rs`) — the shared component implementing the Steam model
-  (pending BTreeMap + cursor + coalesced 16 MiB batches); on a resumed run, chunks that
-  re-hashed intact enter as **Verified markers** instead of data (see §4). The final file
-  opens lazily on the first drained write. gen1 (range-GET) files stream sequentially by
-  construction.
-- **Epic** (`store_dl/epic/driver.rs`): the fetch unit is one **(file, part) job** — a chunk
-  shared by several files is fetched once *per consuming file*, never deduplicated and never
-  cached, so every pending file is a fully self-contained download unit (file-granular
-  resume, no cross-file coupling). Each verified part queues a slice of its decoded body into
-  its owning file's `OrderedDrain`; a per-file mutex serializes insert→drain→append,
-  so parts land in offset order regardless of arrival. Final files are created lazily on
-  the first drained write (never up front — early versions exhausted fds on big first
-  installs).
-- **Amazon**: whole files streamed with plain sequential `write_all` into the destination;
-  out-of-order pieces are rejected explicitly.
+…避けられない「ファイルごとに 1 回の stat」の下限 48 ms に対しての数値です。検証カウンタは候補数が
+判明した時点（レイアウトパスの前）に `(0, N)` として公開されます。
+- **GOG**（`store_dl/gog/engine.rs`）: チャンクはまずメモリ上のバッファに展開され（MD5 検証）、
+  その後**検証済みのチャンクだけ**がファイルの `OrderedDrain`（`store_dl/ordered_drain.rs`）に入ります。
+  これは Steam モデルを実装した共有コンポーネントです（保留用 BTreeMap + カーソル + 16 MiB の結合
+  バッチ）。再開時、無傷で再ハッシュできたチャンクはデータではなく **Verified マーカー**として入ります
+  （§4 参照）。最終ファイルは最初のドレイン書き込み時に遅延オープンします。gen1（レンジ GET）の
+  ファイルは構造上そのまま逐次ストリームになります。
+- **Epic**（`store_dl/epic/driver.rs`）: 取得単位は **(ファイル, パート) ジョブ**です。複数ファイルで
+  共有されるチャンクも、**消費するファイルごとに**取得し、重複排除もキャッシュもしません。そのため
+  各保留ファイルは完全に自己完結したダウンロード単位になります（ファイル粒度の再開、ファイル間の
+  結合なし）。検証済みの各パートは、デコード済みボディのスライスを所有ファイルの `OrderedDrain` に
+  投入し、ファイル単位の Mutex が insert→drain→append を直列化するため、パートは到着順に関係なく
+  オフセット順に並びます。最終ファイルは最初のドレイン書き込み時に遅延作成されます（事前作成は
+  しません。以前のバージョンでは大きな初回インストールで fd を使い果たしました）。
+- **Amazon**: ファイル全体を単純な逐次 `write_all` で宛先へストリームします。順序外の断片は明示的に
+  拒否します。
 
-There are **no staging tmp files and no renames**: GOG/Epic/Amazon write the final path from
-the first byte. Completion invariants (all loud failures, never silent): the drained cursor
-must equal the expected file size before the file counts as done; at run end, every store
-requires **all** files completed — an unfinished file fails the run, and an ERROR run deletes
-the files it touched, so a partial file can never be reported as success.
+**ステージング用の一時ファイルもリネームもありません**: GOG/Epic/Amazon は最初のバイトから最終パスに
+書きます。完了に関する不変条件（すべて明示的な失敗で、決して黙って成功しない）: ファイルが完了と
+みなされる前に、ドレイン済みカーソルが期待サイズと一致している必要があります。実行終了時、すべての
+ストアが**すべての**ファイルの完了を要求します。未完了のファイルがあればその実行は失敗し、ERROR の
+実行は触れたファイルを削除するため、部分的なファイルが成功として報告されることはありません。
 
-Concurrency: an adaptive in-flight window ramps up while the link delivers; a global byte
-budget caps buffered data; per-host connection caps (`PER_HOST_CAP = 8`, device-validated)
-spread load, scaled by distinct CDN host count for GOG/Epic.
+同時実行: 適応的な処理中ウィンドウが回線の速さに応じて広がり、グローバルなバイト予算がバッファ済み
+データを制限し、ホスト単位の接続上限（`PER_HOST_CAP = 8`、端末で検証済み）が負荷を分散します。
+GOG/Epic では CDN ホストの実数でスケールします。
 
-Congestion control is **LEDBAT** (RFC 6817, `queue_delay.rs`): a background thread takes one
-TCP-connect round trip per 250 ms to the CDN hosts (round-robin) and publishes the queueing
-delay — RTT minus a per-host base (minimum over a 10-min history). A connect carries no body,
-so its RTT inflation IS queueing, not transfer time. On each 2 s probe tick both window
-controllers (Steam's and the fetch core's) yield **proportionally** (`window × (1 − 0.1 × off)`,
-at most ~10%/tick, floored at the window minimum) when the queue exceeds the 40 ms target,
-and the throughput-gated growth logic only runs while the queue is under target — the window
-is the congestion knob; there is no byte-rate pacer. While the prober has no sample yet, the
-classic logic (error-rate shrink + the Steam 5×-latency/throughput-confirm congestion shrink)
-runs untouched. The `fetch-window` log lines carry `queue=…ms rtt_base=…ms` (`-` until the
-first sample).
+輻輳制御は **LEDBAT**（RFC 6817、`queue_delay.rs`）です。バックグラウンドスレッドが 250 ms ごとに
+CDN ホストへ TCP 接続の往復を 1 回行い（ラウンドロビン）、待ち行列遅延（RTT から、ホストごとの基準値
+＝10 分履歴の最小値、を引いたもの）を公開します。接続にはボディが無いため、RTT の増加は転送時間では
+なくそのまま待ち行列です。2 秒ごとのプローブで、両方のウィンドウ制御（Steam と fetch core）は
+待ち行列が 40 ms の目標を超えると**比例的に**（`window × (1 − 0.1 × off)`、1 ティックあたり最大
+約 10%、ウィンドウ最小値で下限）譲り、スループットで制限される増加ロジックは待ち行列が目標未満の
+間だけ動作します。ウィンドウが輻輳の調整弁であり、バイトレートのペーサーはありません。プローブが
+まだサンプルを持たない間は、従来のロジック（エラー率による縮小 + Steam の 5 倍遅延／スループット
+確認による輻輳縮小）がそのまま動きます。`fetch-window` のログ行は `queue=…ms rtt_base=…ms` を
+持ちます（最初のサンプルまでは `-`）。
 
-## 3. CDN server handling
+## 3. CDN サーバーの扱い
 
-- **Steam**: Steam assigns a set of content servers, but assignment ≠ quality. `cdn_probe.rs`
-  measures **throughput, not ping** (on-device, geographically "wrong" alibaba out-delivered
-  closer hkg caches 13 MB/s vs 1–2): each candidate gets a real 256 KiB range GET of an
-  actual depot chunk, and we record connect+TTFB and body throughput. Results are cached on
-  disk keyed by the assigned-server-set hash, refreshed when the cache is older than 6 h,
-  the server set changes, or a cached winner was `mark_bad`'d (a host that stalls/errors
-  repeatedly mid-download is recorded and the next run re-probes immediately instead of
-  waiting out the TTL). Fetch failures rotate to the next probed host. The probe spawns
-  lazily on the **first downloaded (non-verifying) byte** — never during prep or the verify
-  sweep, which can take minutes before any fetching starts and must not burn the probe
-  deadline — and is congestion-guarded (skipped while measured throughput is already
-  healthy).
-- **Epic**: the manifest API returns multiple CDN base URLs (`cdn_prefixes`); they become
-  distinct fetch-core host keys with per-host caps and rotation on failure.
-- **GOG**: the ranked mirror list from the Kotlin secure_link pass (`cdnBases`) becomes the
-  fetch pool: `mirror_bases_and_hosts` dedupes by host key and keeps bases/hosts
-  index-aligned — the fetch-core contract is `urls[host_idx] ↔ hosts[host_idx]`, so a
-  misaligned or joined host string silently collapses the pool to one fake host.
-  `per_host_cap_for` scales caps by distinct host count.
-- **Amazon**: signed per-file download URLs from the Amazon API.
+- **Steam**: Steam はコンテンツサーバーの集合を割り当てますが、割り当て＝品質ではありません。
+  `cdn_probe.rs` は**ping ではなくスループット**を測ります（端末上では、地理的に「遠い」alibaba が
+  近くの hkg キャッシュを 13 MB/s 対 1〜2 MB/s で上回りました）。各候補に対して実際の depot チャンクの
+  256 KiB レンジ GET を行い、接続 + TTFB とボディのスループットを記録します。結果は割り当て
+  サーバー集合のハッシュをキーにディスクへキャッシュし、キャッシュが 6 時間より古い、サーバー集合が
+  変わった、またはキャッシュされた勝者が `mark_bad` された場合（ダウンロード中に繰り返し停止／
+  エラーになるホストは記録され、次の実行では TTL を待たずに即座に再プローブします）に更新されます。
+  取得に失敗すると次にプローブしたホストへローテーションします。プローブは**最初の（検証以外の）
+  ダウンロードバイト**で遅延起動します。事前処理や検証スキャン中には起動しません（それらは取得開始まで
+  数分かかることがあり、プローブ期限を消費してはいけないため）。また輻輳ガード付きです
+  （計測済みスループットが既に健全な間はスキップ）。
+- **Epic**: マニフェスト API は複数の CDN ベース URL（`cdn_prefixes`）を返します。それらは
+  fetch-core のホストキーになり、ホスト単位の上限と失敗時のローテーションが適用されます。
+- **GOG**: Kotlin の secure_link 処理が返す順位付きミラー一覧（`cdnBases`）が取得プールになります。
+  `mirror_bases_and_hosts` はホストキーで重複を排除し、base と host のインデックスを揃えます。
+  fetch-core の契約は `urls[host_idx] ↔ hosts[host_idx]` なので、インデックスがずれたりホスト文字列が
+  連結されたりすると、プールが実質 1 つの偽ホストに潰れてしまいます。`per_host_cap_for` は
+  ホストの実数で上限をスケールします。
+- **Amazon**: Amazon API が発行するファイル単位の署名付きダウンロード URL を使います。
 
-## 4. Verify & update flow
+## 4. 検証と更新の流れ
 
-UPDATE and VERIFY are separate modes (`SteamDownloadMode` in Kotlin) that reach the engine as
-`fresh` plus a per-depot manifest gid — the engine itself has no mode concept.
+UPDATE と VERIFY は別モードで（Kotlin では `SteamDownloadMode`）、エンジンには `fresh` と
+depot ごとのマニフェスト gid として届きます。エンジン自体にモードの概念はありません。
 
-### The manifest store (`.DepotDownloader/`)
+### マニフェストストア（`.DepotDownloader/`）
 
-Two directories, because they answer two different questions:
+2 つのディレクトリがあるのは、2 つの異なる問いに答えるためです:
 
-| Path | Meaning |
+| パス | 意味 |
 |---|---|
-| `target/<depot>_<gid>.manifest` | what THIS press is installing. Fetched when the run resolves it, read from disk for the rest of the run, never reused by a later press: a resume re-reads what the CDN serves now instead of finishing a build that may have been superseded while the download sat paused. Replaced wholesale on each press. |
-| `completed/<depot>_<gid>.manifest` | the build the game directory IS. Written **only** by the promotion that follows a depot's successful write, and the only durable manifest state: the **file names are the installed record** (which depots, at which gid), so no pointer file can go stale and a half-written depot can never look installed. |
-| `<depot>_<gid>.inflight` | a target whose writes started and never finished. That depot is walked in full next time — an interrupted run may have half-rewritten a file the new target lists as unchanged, which the delta would otherwise trust. |
+| `target/<depot>_<gid>.manifest` | 今回の実行がインストールしているもの。実行がそれを解決したときに取得され、実行の残りではディスクから読まれ、後の実行で再利用されることはありません。再開時は、ダウンロードが停止していた間に置き換えられたかもしれないビルドを完成させるのではなく、CDN が今配信しているものを読み直します。実行ごとに丸ごと置き換えられます。 |
+| `completed/<depot>_<gid>.manifest` | ゲームディレクトリが実際に「そうなっている」ビルド。depot の書き込み成功後の昇格によって**のみ**書かれ、唯一の永続的なマニフェスト状態です。**ファイル名がインストール記録**（どの depot が、どの gid で）なので、ポインタファイルが古くなることがなく、書きかけの depot がインストール済みに見えることもありません。 |
+| `<depot>_<gid>.inflight` | 書き込みが始まったまま終わらなかった target。次回はその depot を全体走査します。中断された実行が、新しい target では「変更なし」とされるファイルを半分書き換えている可能性があり、差分がそれを信じてしまうためです。 |
 
-Who reads what: the update delta and the removed-content sweep diff `completed/` (the tree) against
-`target/` (the destination); VERIFY asks for the installed gid, so its manifest is read from
-`completed/` and it needs **no fetch and no manifest request code at all**. A depot reading its own
-completed build (VERIFY, or an update whose target is already installed) promotes nothing: the record
-is already right. A press that begins for a depot clears its other `target/` manifests, which is what
-keeps "resume = refresh" honest.
+誰が何を読むか: 更新の差分と削除コンテンツの走査は、`completed/`（現状のツリー）と `target/`
+（目的地）を比較します。VERIFY はインストール済みの gid を要求するので、そのマニフェストは
+`completed/` から読まれ、**取得もマニフェスト要求のコードもまったく不要**です。ある depot が自分自身の
+completed ビルドを読む場合（VERIFY、または target が既にインストール済みの更新）、昇格は行いません
+（記録は既に正しいため）。ある depot のための実行が始まると、その他の `target/` マニフェストは
+消去され、「再開＝更新」を誠実に保ちます。
 
-- **Steam**: existing files are verified chunk-by-chunk against the manifest (SHA-1 after
-  decrypt+decompress of what would be written — i.e. the *existing bytes* are hashed) — the
-  write path never consults a journal, so "resume" always means re-hash. Chunks that match are
-  "verify-skip": rather than moving the write cursor directly (which could jump a gap after a
-  mid-file mismatch and strand later arrivals — the cursor-jump bug fixed in `838ed77ee`), a
-  **Verified marker is parked in the file's pending queue at that offset**, and the normal
-  ordered drain walks over markers without writing. Before finalize,
-  `assert_pipeline_drained` requires every file's cursor == size and pending empty; a violation
-  fails the run, so the retry re-verifies everything. **GOG and Epic share this exact
-  Verified-marker model** via the shared `OrderedDrain` (below).
-- **Update delta**: `unchanged_files` (path + size + equal non-empty `sha_content`) gives the files
-  this run must not touch — no chunk jobs, no re-hash, no finalize. Two things override it: paths
-  the app reports as **DRM-patched** (`untrusted_paths`: a Steamless-unpacked exe or replaced
-  `steam_api*.dll` has a backup sibling, so its bytes are not the previous manifest's), and a depot
-  left `.inflight`. Removed content is swept only after that depot's writes succeeded, and only when
-  every other installed depot is part of the run (its manifest's filenames are needed to know which
-  paths another depot still owns).
-- **Cross-depot name clashes**: two depots of one install can disagree about a path's *type*. Fallout 2
-  is the case in the wild: "Fallout 2 Depot New Base" (38414) declares `master.dat` as a **directory**
-  while "New English" (38415) ships it as a 317 MB **file**, and every package grants both. A
-  case-insensitive volume can hold only one, so the run keeps the **file** and drops the losing
-  directory together with everything under it (logged `depot-clash path=… kept=file depot=…`): a
-  directory is only a container, and the file is the form the game reads — it is also what a Windows
-  install converges on, since the directory cannot be created over the file. Depots the store records
-  as installed take part in that decision even when this press does not select them, so a run can
-  never replace a file an installed depot owns. The write path applies the same rule in both
-  directions — a directory in a file's way is removed (after the free-space preflight, so a failed
-  preflight leaves the old tree; refused when a symlinked ancestor would take the removal outside
-  the install dir) and a file in a directory's way is unlinked. Every creation and removal walks the
-  path from the install root one component at a time, following a component only when it is a link,
-  and refuses any step that leaves the root — so a link anywhere above a path, including above a
-  directory the manifest never declares, cannot redirect the run. It is a lexical walk rather than
-  `realpath`: on Android storage the root and a path below it can resolve to different mount aliases
-  for a tree that never leaves itself. A directory entry that is a symlink is kept only while it
-  resolves inside the tree, and otherwise replaced. An install left in the wrong
-  shape by an earlier attempt repairs itself instead of failing with `EEXIST`/`EISDIR`. A file the
-  delta calls unchanged is only trusted when it is still the regular file of the manifest's size on
-  disk; a deleted, truncated or directory-shadowed path is revalidated like any other change.
-- **Manifest & key freshness**: the requested build's manifest is fetched on every press (a cached
-  `target/` file is never reused), and a manifest whose metadata does not match the depot/gid it is
-  filed under is never trusted as a diff base — the run fetches instead. Depot keys are requested via
-  the depot's **owning app** (shared redist depots like 228990 belong to a different app); shared
-  depots with no manifest gid for the branch are skipped by design.
-- **GOG**: completed+MD5-verified files are skipped wholesale — `file_verified` **requires**
-  a manifest MD5 (deliberately stricter than Java's size-only fallback): a size-only pass
-  combined with the old Kotlin `setLength` pre-allocation let zero-filled files pass verify
-  forever (the pre-allocation corruption hole). MD5-less manifest files fall through to the
-  chunk sweep. Within a file, a **cancelled** run keeps its partial final file; the next run
-  hashes **every** chunk's on-disk bytes against the manifest's decompressed MD5 into a
-  per-chunk bitmap (`verified_chunks`), queues verified chunks as drain markers, and
-  re-fetches **only mismatched/missing chunks** — a single corrupt mid-file chunk costs one
-  chunk, not the whole suffix. The partial file is kept **whole** during the run (no prefix
-  truncation at open, which would destroy verified chunks past a gap); garbage past the
-  manifest size is truncated at finalize. A file whose on-disk bytes verify *whole* counts
-  as complete without any fetching. No trust is involved — every kept byte re-hashes. An
-  **error** run deletes the files it touched.
-- **Epic**: completed files are skipped by the delta/verify pass (whole-file size + SHA-1).
-  Within a file the same selective model applies per **part** (`verified_parts` bitmap +
-  drain markers on the kept whole file, tail truncated at completion): a part can only
-  re-verify when it covers its **whole chunk** (`offset == 0`, ≤ 64 MiB), because the
-  manifest's SHA-1 spans the entire decompressed chunk — a **slice part stays unverifiable**
-  and is re-fetched, but no longer forfeits verification of later parts (interior parts of
-  large files are almost always whole-chunk, so nearly all progress keeps). Zero-length
-  parts verify trivially.
-- **Amazon**: resume-skip on `st_size == manifest size` (no hash on skip, matching the Java
-  behaviour); a partial file deletes on any failed/cancelled attempt (no within-file
-  resume).
+- **Steam**: 既存ファイルはマニフェストに対してチャンク単位で検証されます（書かれるはずの内容を
+  復号・展開した後の SHA-1、つまり*既存のバイト列*をハッシュします）。書き込み経路はジャーナルを
+  参照しないため、「再開」は常に再ハッシュを意味します。一致したチャンクは「検証スキップ」となり、
+  書き込みカーソルを直接動かす（ファイル途中の不一致の後に隙間を飛び越して、後続の到着を孤立させる
+  恐れがある — `838ed77ee` で修正されたカーソルジャンプのバグ）代わりに、**そのオフセットの保留
+  キューに Verified マーカーを置き**、通常の順序付きドレインがマーカーの上を書き込みなしで通過します。
+  finalize の前に `assert_pipeline_drained` が各ファイルのカーソル == サイズかつ保留が空であることを
+  要求し、違反すれば実行は失敗するので、再試行で全体が再検証されます。**GOG と Epic もこの
+  Verified マーカーのモデルを共有**します（後述の共有 `OrderedDrain` 経由）。
+- **更新の差分**: `unchanged_files`（パス + サイズ + 空でない `sha_content` が等しい）が、この実行で
+  触れてはいけないファイルを示します（チャンクジョブなし、再ハッシュなし、finalize なし）。これを
+  上書きする条件が 2 つあります。アプリが **DRM パッチ済み**と報告したパス（`untrusted_paths`:
+  Steamless で展開した exe や置き換えられた `steam_api*.dll` にはバックアップの兄弟ファイルがある
+  ため、そのバイト列は前回のマニフェストのものではない）と、`.inflight` のままの depot です。
+  削除コンテンツの走査は、その depot の書き込みが成功した後にのみ行われ、かつ他のインストール済み
+  depot がすべてその実行に含まれる場合に限られます（別の depot がまだ所有しているパスを知るには、
+  そのマニフェストのファイル名が必要なため）。
+- **depot 間の名前衝突**: 1 つのインストールの 2 つの depot が、あるパスの*種類*で食い違うことが
+  あります。実例は Fallout 2 で、「Fallout 2 Depot New Base」(38414) は `master.dat` を
+  **ディレクトリ**として宣言し、「New English」(38415) は 317 MB の**ファイル**として同梱しています。
+  どちらのパッケージも両方を提供します。大文字小文字を区別しないボリュームでは片方しか置けないため、
+  実行は**ファイル**を残し、負けたディレクトリをその配下ごと削除します（
+  `depot-clash path=… kept=file depot=…` とログ）。ディレクトリは単なる入れ物であり、ゲームが読むのは
+  ファイルの形です。また、ファイルの上にディレクトリは作れないため、Windows でのインストールも同じ
+  結果に収束します。ストアがインストール済みと記録している depot は、今回の実行で選択されていなくても
+  この判断に参加するので、実行がインストール済み depot の所有ファイルを置き換えることはありません。
+  書き込み経路も両方向に同じルールを適用します（ファイルの行く手を阻むディレクトリは削除し、空き容量の
+  事前チェックの後に実行するので事前チェックが失敗すれば古いツリーが残ります。シンボリックリンクの
+  祖先が削除をインストール先の外へ導く場合は拒否します。ディレクトリの行く手を阻むファイルは unlink
+  します）。すべての作成と削除は、インストールルートからパスを 1 要素ずつたどり、要素がリンクの場合
+  にのみ辿り、ルートを出るステップは拒否します。したがって、パスの上流のどこか（マニフェストが宣言して
+  いないディレクトリの上を含む）にあるリンクが実行を別の場所へ誘導することはできません。これは
+  `realpath` ではなく字句的な走査です（Android のストレージでは、決してツリー外に出ないパスでも
+  ルートとその配下が異なるマウント別名に解決され得るため）。ディレクトリエントリがシンボリックリンクの
+  場合、ツリー内に解決される間だけ保持し、それ以外は置き換えます。以前の試行で誤った形になった
+  インストールは、`EEXIST`/`EISDIR` で失敗せず自己修復します。差分が変更なしとするファイルは、
+  ディスク上でマニフェストのサイズの通常ファイルである場合にのみ信頼されます。削除・切り詰め・
+  ディレクトリに覆われたパスは、他の変更と同様に再検証されます。
+- **マニフェストとキーの鮮度**: 要求されたビルドのマニフェストは実行ごとに取得されます（キャッシュ
+  された `target/` ファイルは再利用されません）。また、メタデータが記録先の depot/gid と一致しない
+  マニフェストは差分の基準として信頼されず、その場合は取得を行います。depot キーは depot の
+  **所有アプリ**経由で要求します（228990 のような共有の再配布 depot は別のアプリに属します）。
+  ブランチに対するマニフェスト gid を持たない共有 depot は設計上スキップされます。
+- **GOG**: 完了かつ MD5 検証済みのファイルは丸ごとスキップされます。`file_verified` はマニフェストの
+  MD5 を**必須**とします（Java のサイズのみのフォールバックより意図的に厳しくしています）。サイズ
+  だけの検査と、旧 Kotlin の `setLength` 事前確保が組み合わさると、ゼロ埋めされたファイルが永久に
+  検証を通ってしまったためです（事前確保による破損の穴）。MD5 の無いマニフェストファイルはチャンク
+  走査に回ります。ファイル内では、**キャンセル**された実行は部分的な最終ファイルを保持し、次の実行が
+  **すべての**チャンクのディスク上のバイトをマニフェストの展開後 MD5 と突き合わせてチャンク単位の
+  ビットマップ（`verified_chunks`）を作り、検証済みチャンクをドレインマーカーとして積み、
+  **不一致／欠落したチャンクだけ**を再取得します。ファイル途中の壊れたチャンク 1 つで失うのは
+  その 1 チャンクだけで、以降の全体ではありません。部分ファイルは実行中**丸ごと**保持されます
+  （オープン時に先頭を切り詰めると、隙間より後ろの検証済みチャンクが壊れるため）。マニフェストの
+  サイズを超えるゴミは finalize 時に切り詰めます。ディスク上のバイトが*全体として*検証できるファイルは、
+  取得なしで完了とみなされます。信頼は一切なく、保持したすべてのバイトを再ハッシュします。
+  **エラー**の実行は触れたファイルを削除します。
+- **Epic**: 完了したファイルは差分／検証パスでスキップされます（ファイル全体のサイズ + SHA-1）。
+  ファイル内では同じ選択的モデルを**パート**単位で適用します（`verified_parts` ビットマップ +
+  保持した全体ファイル上のドレインマーカー、完了時に末尾を切り詰め）。パートは**チャンク全体**を
+  覆う場合（`offset == 0`、64 MiB 以下）にのみ再検証できます。マニフェストの SHA-1 は展開後の
+  チャンク全体に及ぶため、**スライスのパートは検証不能**で再取得になりますが、後続パートの検証を
+  失うことはなくなりました（大きなファイルの内部パートはほぼ常にチャンク全体なので、進捗のほとんどは
+  保たれます）。長さ 0 のパートは自明に検証できます。
+- **Amazon**: `st_size == マニフェストのサイズ` で再開スキップします（スキップ時のハッシュなし、
+  Java の挙動に合わせています）。部分ファイルは失敗／キャンセルのたびに削除されます
+  （ファイル内再開はなし）。
 
-Every verify path above reports the file it is re-hashing: Steam fires `DepotWriteOptions.status`
-once per file in the verify-skip path, GOG fires `GogEvents::on_file_verify` per file in its
-verify sweep, and Epic gets a `verify_status` closure in `run_plan`. All three surface to the
-app screen's status row as "Verifying Files (k/N)" via the JNI listeners'
-`onVerifying(String, int, int)` callback, cleared on the first real download progress.
+上記のすべての検証経路は、再ハッシュしているファイルを報告します。Steam は検証スキップ経路で
+ファイルごとに `DepotWriteOptions.status` を発火し、GOG は検証走査でファイルごとに
+`GogEvents::on_file_verify` を発火し、Epic は `run_plan` で `verify_status` クロージャを受け取ります。
+3 つとも JNI リスナーの `onVerifying(String, int, int)` コールバックを通じてアプリ画面のステータス行に
+「Verifying Files (k/N)」として表示され、最初の実際のダウンロード進捗でクリアされます。
 
-## 5. Error handling
+## 5. エラー処理
 
-- **Rust side**: sink-level errors classify as `Retry` (network, decompress, hash mismatch,
-  out-of-order arrival — the run retries/rotates) vs `Fatal` (disk/FS errors, corruption
-  invariants — the run stops; a disk error is not CDN-curable). Run end always reports the
-  first fatal error; an ERROR run deletes the unfinished files it touched, a CANCELLED run
-  keeps them for the selective verified resume (see *Verify & update*).
-- **Dispatch head-of-line rescue** (Steam): the in-flight byte budget is a hard memory cap on
-  fetched-but-unwritten data, and its gate admits a chunk that sits **exactly at its file's copy
-  cursor** even over budget — that chunk frees itself on arrival and drains the data parked behind
-  its gap. Because a queue-front job is not necessarily that chunk (a mid-file chunk that failed
-  during an error burst goes to the back of the retry FIFO while chunks fetched behind it fill the
-  budget), the gate substitutes the head-of-line job whenever it refuses a non-head-of-line one.
-  Without that substitution the run deadlocks — nothing in flight, budget full, and the frontier
-  chunk never re-dispatched — until the watchdog below aborts the depot.
-- **Stall watchdog** (Steam): if `bytes_written` stops advancing while the download isn't
-  done, the engine dumps a `write-stall depot=… lock=HELD` diagnostic line and aborts the
-  run with a deliberate **timeout** failure — designed to be classified transient so the
-  store layer auto-retries instead of hanging forever.
-- **Pool-verdict watchdog** (fetch core): if every item is dispatched and no process-pool
-  verdict arrives for 60s, the driver aborts with a *no process-pool verdict* error naming
-  the stuck `item:attempt` ids — the pool might be dead. The error is a suspicion, not a
-  verdict of its own: `run_fetch` joins the pool threads before building the outcome, and
-  if every item has an Ok verdict by then the pool merely stalled (seen on-device: two
-  exFAT/FUSE writes wedged ~60 s at the tail of a 62 GB Epic run, then completed) — the
-  stale watchdog error is downgraded to success with a log line.
-- **Kotlin side** (`GameDownloadService.isTransientFailure`): permanent markers are checked
-  first (missing depot key/manifest, no space, decrypt/parse failures, cancel); transient
-  markers (timeout, connection resets, EOF, DNS, stalls, 429/5xx, no CDN servers) trigger
-  auto-retry with backoff (`reportFailure`, capped attempts). HTTP status codes match on
-  **digit boundaries** so a number inside a message (e.g. "idle timeout at offset 404128")
-  can never be misread as a status code. The Steam download catch routes every native
-  failure through this classifier — transient failures keep the queue slot and show as
-  Queued; permanent ones fail visibly.
-- **Progress snapshots** are persisted on failure so retries resume instead of restarting.
+- **Rust 側**: シンクレベルのエラーは `Retry`（ネットワーク、展開、ハッシュ不一致、順序外の到着 —
+  実行は再試行／ローテーションする）と `Fatal`（ディスク／FS エラー、破損に関する不変条件 — 実行は
+  停止する。ディスクのエラーは CDN では治せない）に分類されます。実行終了時は常に最初の致命的
+  エラーを報告します。ERROR の実行は触れた未完了ファイルを削除し、CANCELLED の実行は選択的な
+  検証付き再開のためにそれらを保持します（*検証と更新* 参照）。
+- **ディスパッチの先頭詰まり救済**（Steam）: 処理中のバイト予算は、取得済みだが未書き込みのデータに
+  対する厳格なメモリ上限です。そのゲートは、予算超過であっても**ファイルのコピーカーソルにちょうど
+  位置する**チャンクを許可します。そのチャンクは到着時に自分自身を解放し、隙間の後ろに滞留した
+  データをドレインするからです。キューの先頭ジョブが必ずしもそのチャンクとは限らないため（エラー
+  バースト中に失敗したファイル途中のチャンクは再試行 FIFO の最後尾に回り、その背後で取得された
+  チャンクが予算を埋めます）、ゲートは先頭以外のジョブを拒否したときは代わりに先頭ジョブを許可
+  します。この置き換えが無いと、実行はデッドロックします（何も処理中でなく、予算は満杯で、先頭の
+  チャンクが再ディスパッチされない）。後述の監視が depot を中断するまで続きます。
+- **停止監視**（Steam）: ダウンロードが未完了なのに `bytes_written` が進まなくなると、エンジンは
+  `write-stall depot=… lock=HELD` という診断行を出力し、意図的に**タイムアウト**失敗として実行を
+  中断します。これは一時的な失敗として分類されるよう設計されており、ストア層が永久にハングする
+  代わりに自動再試行します。
+- **プール判定の監視**（fetch core）: すべてのアイテムがディスパッチ済みで、60 秒間プロセスプールからの
+  判定が無い場合、ドライバは詰まっている `item:attempt` ID を示す *no process-pool verdict* エラーで
+  中断します（プールが死んでいる可能性があるため）。このエラーは疑いであって確定判定ではありません。
+  `run_fetch` は結果を組み立てる前にプールのスレッドを join するので、その時点で全アイテムに Ok の
+  判定があれば、プールは単に停滞しただけです（端末で観測: 62 GB の Epic 実行の末尾で 2 つの
+  exFAT/FUSE 書き込みが約 60 秒固まり、その後完了しました）。古い監視エラーは、ログ行を残して成功に
+  格下げされます。
+- **Kotlin 側**（`GameDownloadService.isTransientFailure`）: まず恒久的なマーカー（depot キー／
+  マニフェストの欠落、容量不足、復号／解析の失敗、キャンセル）を確認します。一時的なマーカー
+  （タイムアウト、接続リセット、EOF、DNS、停止、429/5xx、CDN サーバーなし）は、バックオフ付きの
+  自動再試行を引き起こします（`reportFailure`、試行回数に上限あり）。HTTP ステータスコードは
+  **数字の境界**で照合するため、メッセージ中の数値（例: 「idle timeout at offset 404128」）が
+  ステータスコードと誤読されることはありません。Steam ダウンロードの catch は、すべてのネイティブ
+  失敗をこの分類器に通します。一時的な失敗はキューの枠を保持して「待機中」と表示され、恒久的な失敗は
+  目に見える形で失敗します。
+- **進捗スナップショット**は失敗時に永続化されるので、再試行は最初からではなく続きから行われます。
 
-## 6. Building & testing
+## 6. ビルドとテスト
 
-The crate is plain Rust with no Android-only test dependencies — the full suite runs on the
-host:
+このクレートは純粋な Rust で、Android 専用のテスト依存はありません。テストスイート全体がホスト上で
+動きます:
 
 ```sh
 cd app/src/main/cpp/gn-download/rust
 cargo test --release
 ```
 
-(`cargo build --release` must be warning-free — that is a project rule.)
+（`cargo build --release` は警告ゼロでなければなりません — これはプロジェクトのルールです。）
 
-Android binaries are built with the repo script, which cross-compiles both ABIs and installs
-them into `app/src/main/jniLibs/`:
+Android 用バイナリはリポジトリのスクリプトでビルドし、両方の ABI をクロスコンパイルして
+`app/src/main/jniLibs/` に配置します:
 
 ```sh
 ./tools/build-gn-download.sh          # aarch64-linux-android + armv7-linux-androideabi
 ```
 
-The app packages the prebuilt `.so` directly (no Gradle native build); a normal
-`./gradlew :app:assembleModernDebug` picks them up.
+アプリはビルド済みの `.so` を直接パッケージします（Gradle でのネイティブビルドはなし）。
+通常の `./gradlew :app:assembleModernDebug` でそれらが取り込まれます。
 
-The test suite is behaviour-heavy on purpose: the ordered-drain component, both store
-engines' sink logic (out-of-order arrival, gap parking, drain invariants, unfinalized
-detection), Steam chunk crypto/verify paths, resume/journal handling, and CDN probe caching
-are all covered by host tests. Anything that touches the write pipeline should add a test
-here first — device time is for validating throughput and FUSE/SD behaviour, not logic.
+テストスイートは意図的に振る舞い重視です。順序付きドレインのコンポーネント、両ストアエンジンの
+シンク処理（順序外の到着、隙間の待避、ドレインの不変条件、未 finalize の検出）、Steam チャンクの
+暗号／検証経路、再開／ジャーナルの扱い、CDN プローブのキャッシュは、すべてホストテストでカバー
+されています。書き込みパイプラインに触れる変更は、まずここにテストを追加してください。端末の時間は
+ロジックではなく、スループットと FUSE/SD の挙動の検証に使うものです。

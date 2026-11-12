@@ -1,16 +1,16 @@
-# PostHog recipes
+# PostHog レシピ集
 
-Queries we derive server-side instead of adding client tracking. All of them use events that already
-ship behind the usage-analytics setting.
+クライアント側にトラッキングを追加する代わりに、サーバー側（PostHog）で導出しているクエリ集です。
+いずれも「利用状況の解析」設定の背後で既に送信されているイベントのみを使います。
 
-## Time away after a store click
+## ストアをクリックした後、どれだけ離れていたか
 
-The app does not record when a user comes back from a store page. Derive it from the click event and
-the next `Application Opened` event for the same person. That is the PostHog SDK's own lifecycle event
-and it fires on every return to the foreground. Do not use our custom `app_foregrounded`; as of
-September 2026 it does not appear in PostHog at all. Use `recommendation_link_clicked` for the Discover
-buy button and `featured_action_clicked` for campaign CTAs; both carry `sid` (the CJ sub-ID), `source`
-and `rank`.
+アプリは「ユーザーがストアページから戻ってきた時刻」を記録していません。クリックイベントと、
+同じ人物の次の `Application Opened` イベントから導出します。これは PostHog SDK 自身の
+ライフサイクルイベントで、前面に戻るたびに発火します。独自の `app_foregrounded` は使わないでください
+（2026年9月時点では PostHog にまったく現れません）。Discover の購入ボタンには
+`recommendation_link_clicked`、キャンペーンの CTA には `featured_action_clicked` を使います。
+どちらも `sid`（CJ のサブID）、`source`、`rank` を持っています。
 
 ```sql
 SELECT sid, game_name, source, rank, click_ts, next_fg,
@@ -36,23 +36,23 @@ WHERE event = 'recommendation_link_clicked'
 ORDER BY click_ts DESC
 ```
 
-Notes:
+補足:
 
-- One scan of `events`; no join. `minIf` over the window finds the next foreground per person.
-- Clicks with no foreground inside 30 minutes drop out. Count them separately if you want a
-  "never came back" rate: same query without the two `next_fg` filters, then `countIf(next_fg = 0 OR
-  next_fg > click_ts + INTERVAL 30 MINUTE)`.
-- `hero` source with rank `-1` is the All-tab hero card, not Discover.
+- `events` のスキャンは 1 回で、結合はありません。ウィンドウ関数の `minIf` で人物ごとの次の前面化を求めます。
+- 30 分以内に前面化がなかったクリックは除外されます。「戻ってこなかった」率を出したい場合は別途集計してください:
+  同じクエリから `next_fg` に関する 2 つの条件を外し、`countIf(next_fg = 0 OR
+  next_fg > click_ts + INTERVAL 30 MINUTE)` を取ります。
+- `source` が `hero` で `rank` が `-1` のものは、Discover ではなく「すべて」タブのヒーローカードです。
 
-## Joining CJ sales to placements
+## CJ の売上と掲載位置を結びつける
 
-The sub-ID on GOG affiliate links is `gn_{source}_r{rank}_{clickId}`. `clickId` is present only when
-usage analytics is on. In the CJ commission report, split the SID on `_` to get source and rank, and
-match `clickId` to `properties.click_id` on `recommendation_link_clicked` or `featured_action_clicked`
-for the rest of the click's properties.
+GOG のアフィリエイトリンクのサブIDは `gn_{source}_r{rank}_{clickId}` です。`clickId` は
+利用状況の解析がオンの場合にのみ含まれます。CJ の手数料レポートでは、SID を `_` で分割して
+source と rank を得て、`clickId` を `recommendation_link_clicked` または `featured_action_clicked` の
+`properties.click_id` と突き合わせれば、クリックの残りのプロパティが分かります。
 
-## Campaign to install or launch
+## キャンペーンからインストール／起動へ
 
-`game_install_started` and `game_launched` carry `campaign_id`, `campaign_source` and
-`campaign_click_age_s` when the Steam app was reached through a campaign CTA in the last 14 days. No
-derivation needed; filter on `campaign_id` being set.
+`game_install_started` と `game_launched` は、直近 14 日以内にキャンペーンの CTA 経由で
+Steam のアプリページに到達した場合、`campaign_id`、`campaign_source`、`campaign_click_age_s` を持ちます。
+導出は不要で、`campaign_id` が設定されているものだけを絞り込めば十分です。
