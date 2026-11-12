@@ -32,8 +32,18 @@ jobs:
           name: ${{ inputs.artifact_name }}
           path: ./apk
 
-      - name: List APK
-        run: find ./apk -name "*.apk" -exec ls -lh {} \;
+      - name: Locate APK
+        run: |
+          echo "=== downloaded files ==="
+          find ./apk -type f -exec ls -lh {} \;
+          APK=$(find ./apk -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "ERROR: no APK found under ./apk"
+            exit 1
+          fi
+          echo "Found APK: $APK"
+          cp "$APK" ./gamenative-legacy-debug.apk
+          ls -lh ./gamenative-legacy-debug.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -42,6 +52,6 @@ jobs:
           name: ${{ inputs.tag }}
           prerelease: true
           generate_release_notes: true
-          files: ./apk/*.apk
+          files: ./gamenative-legacy-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
