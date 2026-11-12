@@ -52,6 +52,9 @@ class DriveStorageManager(
     }
 
     suspend fun removeAccount(accountId: String) {
+        store.account(accountId)?.let { account ->
+            if (account.refreshToken != null) DriveOAuthClient.revoke(account)
+        }
         store.removeAccount(accountId)
         refresh()
     }

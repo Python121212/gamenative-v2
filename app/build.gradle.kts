@@ -24,6 +24,40 @@ val keystoreProperties: Properties? = if (keystorePropertiesFile.exists()) {
 val posthogApiKey: String = project.findProperty("POSTHOG_API_KEY") as String? ?: System.getenv("POSTHOG_API_KEY") ?: ""
 val posthogHost: String = project.findProperty("POSTHOG_HOST") as String? ?: System.getenv("POSTHOG_HOST") ?: "https://us.i.posthog.com"
 
+// Values may come from local.properties, -P properties or the environment.
+val localProperties: Properties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        load(FileInputStream(file))
+    }
+}
+
+fun configValue(name: String): String =
+    (project.findProperty(name) as String?)
+        ?: System.getenv(name)
+        ?: localProperties.getProperty(name)
+        ?: ""
+
+// Google Drive pseudo-SSD: the OAuth client (type "Desktop app") is baked in
+// as a generated asset so it can be empty without breaking the Java build.
+val driveOauthAssetDir = layout.buildDirectory.dir("generated/driveOauth")
+val driveOauthAssetsPath: String = driveOauthAssetDir.get().asFile.absolutePath
+
+val generateDriveOauthConfig = tasks.register("generateDriveOauthConfig") {
+    val outputDir = driveOauthAssetDir
+    val clientId = configValue("GOOGLE_OAUTH_CLIENT_ID")
+    val clientSecret = configValue("GOOGLE_OAUTH_CLIENT_SECRET")
+    outputs.dir(outputDir)
+    doLast {
+        val file = outputDir.get().file("drive_oauth.json").asFile
+        file.parentFile?.mkdirs()
+        file.writeText(
+            "{\"client_id\":" + "\"" + clientId + "\"," +
+                "\"client_secret\":" + "\"" + clientSecret + "\"}"
+        )
+    }
+}
+
 val metaAppId: String = project.findProperty("META_APP_ID") as String? ?: System.getenv("META_APP_ID") ?: ""
 val productSku: String = project.findProperty("PRODUCT_SKU") as String? ?: System.getenv("PRODUCT_SKU") ?: ""
 
@@ -266,7 +300,7 @@ android {
         getByName("legacy") {
             java.srcDir("src/nonXr/java")
             assets {
-                srcDirs("src/legacy/assets", "src/main/assets")
+                srcDirs("src/legacy/assets", "src/main/assets", driveOauthAssetsPath)
             }
         }
         getByName("legacyXr") {
@@ -275,7 +309,7 @@ android {
             // keep the shared parts in sync with that file.
             manifest.srcFile("src/legacyXr/AndroidManifest.xml")
             assets {
-                srcDirs("src/legacy/assets", "src/main/assets")
+                srcDirs("src/legacy/assets", "src/main/assets", driveOauthAssetsPath)
             }
             jniLibs {
                 srcDirs("src/legacy/jniLibs", "src/legacyXr/jniLibs")
@@ -284,12 +318,12 @@ android {
         getByName("modern") {
             java.srcDir("src/nonXr/java")
             assets {
-                srcDirs("src/modern/assets", "src/main/assets")
+                srcDirs("src/modern/assets", "src/main/assets", driveOauthAssetsPath)
             }
         }
         getByName("modernXr") {
             assets {
-                srcDirs("src/modern/assets", "src/main/assets")
+                srcDirs("src/modern/assets", "src/main/assets", driveOauthAssetsPath)
             }
             jniLibs {
                 setSrcDirs(listOf("src/modern/jniLibs", "src/modernXr/jniLibs"))
@@ -531,4 +565,9 @@ dependencies {
 
     "modernXrImplementation"("com.meta.horizon.platform.sdk:core-kotlin:0.2.2")
     "modernXrImplementation"("com.meta.horizon.platform.sdk:iap-kotlin:0.2.2")
+}
+
+// The Drive pseudo-SSD OAuth config is generated before assets are merged.
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(generateDriveOauthConfig)
 }

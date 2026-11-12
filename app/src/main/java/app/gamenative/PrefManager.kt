@@ -1681,6 +1681,22 @@ object PrefManager {
             setPref(DRIVE_PSEUDO_SSD_ENABLED, value)
         }
 
+    private val DRIVE_OAUTH_CLIENT_ID = stringPreferencesKey("drive_oauth_client_id")
+    /** Google OAuth (installed app) client ID used by the Drive pseudo-SSD. */
+    var driveOAuthClientId: String
+        get() = getPref(DRIVE_OAUTH_CLIENT_ID, "")
+        set(value) {
+            setPref(DRIVE_OAUTH_CLIENT_ID, value)
+        }
+
+    private val DRIVE_OAUTH_CLIENT_SECRET = stringPreferencesKey("drive_oauth_client_secret")
+    /** Google OAuth client secret used by the Drive pseudo-SSD. */
+    var driveOAuthClientSecret: String
+        get() = getPref(DRIVE_OAUTH_CLIENT_SECRET, "")
+        set(value) {
+            setPref(DRIVE_OAUTH_CLIENT_SECRET, value)
+        }
+
     private val USE_EXTERNAL_STORAGE = booleanPreferencesKey("use_external_storage")
     var useExternalStorage: Boolean
         get() = getPref(USE_EXTERNAL_STORAGE, false)

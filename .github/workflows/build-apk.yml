@@ -45,12 +45,25 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Inject dummy credentials
+      - name: Inject credentials
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
         run: |
-          cat <<EOF > local.properties
-          POSTHOG_API_KEY=dummy
-          POSTHOG_HOST=https://us.i.posthog.com
-          EOF
+          # Never write empty values: the secrets plugin turns every entry of
+          # local.properties into a BuildConfig field, and an empty one is
+          # invalid Java (`= ;`).
+          {
+            echo "POSTHOG_API_KEY=dummy"
+            echo "POSTHOG_HOST=https://us.i.posthog.com"
+            if [ -n "$GOOGLE_OAUTH_CLIENT_ID" ]; then
+              echo "GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID"
+            fi
+            if [ -n "$GOOGLE_OAUTH_CLIENT_SECRET" ]; then
+              echo "GOOGLE_OAUTH_CLIENT_SECRET=$GOOGLE_OAUTH_CLIENT_SECRET"
+            fi
+          } > local.properties
+          sed 's/=.*/=<set>/' local.properties
 
       - name: Install Android SDK components
         run: |
@@ -76,20 +89,21 @@ jobs:
       - name: Report build errors
         if: failure()
         run: |
-          if [ ! -f gradle-build.log ]; then exit 0; fi
-          # Emit Kotlin/Gradle errors (with their continuation lines) as check
-          # annotations so they can be read through the API.
-          awk '/^e: /{n++} n>0 && n<=8 {print}' gradle-build.log | head -n 60 | \
-            while IFS= read -r line; do
-              escaped=$(printf '%s' "$line" | tr '%\r\n' '    ')
-              echo "::error::$escaped"
+          emit() { echo "::error::$1"; }
+          emit "HEAD=$(git rev-parse --short HEAD) $(git log -1 --format=%s)"
+          grep -n 'GOOGLE_OAUTH' app/build.gradle.kts | while IFS= read -r l; do emit "GRADLE| $l"; done
+          BC="app/build/generated/source/buildConfig/legacy/debug/app/gamenative/BuildConfig.java"
+          if [ -f "$BC" ]; then
+            sed -n '13,22p' "$BC" | while IFS= read -r l; do emit "BC| $l"; done
+          else
+            emit "BC| (not generated)"
+          fi
+          if [ -f gradle-build.log ]; then
+            awk '/^e: /{n++} n>0 && n<=6 {print}' gradle-build.log | head -n 40 | while IFS= read -r line; do
+              emit "$(printf '%s' "$line" | tr '%\r\n' '    ')"
             done
-          awk '/What went wrong\??:/{p=1;c=0} p&&c<25{print;c++}' gradle-build.log | \
-            while IFS= read -r line; do
-              escaped=$(printf '%s' "$line" | tr '%\r\n' '    ')
-              echo "::error::$escaped"
-            done
-          tail -n 40 gradle-build.log
+            tail -n 30 gradle-build.log
+          fi
 
       - name: List APKs
         run: find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
