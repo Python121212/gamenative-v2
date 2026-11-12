@@ -70,6 +70,11 @@ val ciDebugStorePassword = "gamenative-ci"
 val ciDebugKeyAlias = "gamenative-ci"
 val hasCiDebugKeystore: Boolean = ciDebugKeystore.isFile
 
+// 反復用: `-PfastRelease` を付けると R8 とリソース圧縮を切る。
+// リリース変種（release / release-signed / release-gold）は通常 15〜30 分かかるが、
+// 「まず動く APK が欲しい」ときはこれで数分で作れる（配布物には使わない）。
+val fastRelease: Boolean = providers.gradleProperty("fastRelease").isPresent
+
 val driveOauthClientId: String = configValue("GOOGLE_OAUTH_CLIENT_ID")
 
 /** `com.googleusercontent.apps.<client-id>` or a harmless fallback. */
@@ -276,18 +281,18 @@ android {
             }
         }
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = !fastRelease
+            isShrinkResources = !fastRelease
             signingConfig = signingConfigs.getByName("debug")
         }
         create("release-signed") {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = !fastRelease
+            isShrinkResources = !fastRelease
             signingConfig = signingConfigs.getByName("pluvia")
         }
         create("release-gold") {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = !fastRelease
+            isShrinkResources = !fastRelease
             signingConfig = signingConfigs.getByName("pluvia")
             applicationIdSuffix = ".gold"
             buildConfigField("boolean", "GOLD", "true")

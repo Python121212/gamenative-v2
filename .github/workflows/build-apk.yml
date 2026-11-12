@@ -17,8 +17,14 @@ on:
 
 jobs:
   build:
+    name: build (${{ matrix.variant }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # `all` は legacy と modern を**並列**に回す（直列だと単純に倍かかる）。
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(inputs.variant == 'all' && '["legacy","modern"]' || format('["{0}"]', inputs.variant)) }}
 
     steps:
       - name: Checkout
@@ -94,19 +100,18 @@ jobs:
       - name: Build debug APK
         run: |
           set -o pipefail
-          case "${{ inputs.variant }}" in
+          case "${{ matrix.variant }}" in
             legacy) ./gradlew :app:assembleLegacyDebug ;;
             modern) ./gradlew :app:assembleModernDebug ;;
             legacyXr) ./gradlew :app:assembleLegacyXrDebug ;;
             modernXr) ./gradlew :app:assembleModernXrDebug ;;
-            all) ./gradlew :app:assembleLegacyDebug :app:assembleModernDebug ;;
           esac 2>&1 | tee gradle-build.log
 
       # The unit-test sources are not part of assembleDebug: compile them, and run the
       # translation-stack and AI-diagnosis suites so a regression in layer de-duplication
       # or in the diagnosis rules fails here (both run offline, no network).
       - name: Unit tests (translation stack + AI diagnosis)
-        if: inputs.variant == 'legacy'
+        if: matrix.variant == 'legacy'
         run: |
           set -o pipefail
           ./gradlew :app:compileLegacyDebugUnitTestKotlin :app:testLegacyDebugUnitTest \
@@ -162,6 +167,6 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gamenative-${{ inputs.variant }}-debug
+          name: gamenative-${{ matrix.variant }}-debug
           path: app/build/outputs/apk/**/app-*-debug.apk
           if-no-files-found: error
