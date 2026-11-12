@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.io.File
 import java.io.FileInputStream
 
 plugins {
@@ -41,6 +42,22 @@ fun configValue(name: String): String =
 // Google Drive pseudo-SSD: the OAuth client (type "Android") is baked in as a
 // generated asset so it can be empty without breaking the Java build. The
 // redirect scheme is derived from the client ID, exactly like Google expects.
+// Optional fixed signing key (CI). A stable key means a stable SHA-1, which an
+// "Android" OAuth client requires and which keeps APK updates installable.
+val fixedKeystoreFile: String = System.getenv("KEYSTORE_FILE")
+    ?: (project.findProperty("KEYSTORE_FILE") as String?)
+    ?: ""
+val fixedKeystorePassword: String = System.getenv("KEYSTORE_PASSWORD")
+    ?: (project.findProperty("KEYSTORE_PASSWORD") as String?)
+    ?: ""
+val fixedKeyAlias: String = System.getenv("KEY_ALIAS")
+    ?: (project.findProperty("KEY_ALIAS") as String?)
+    ?: ""
+val fixedKeyPassword: String = System.getenv("KEY_PASSWORD")
+    ?: (project.findProperty("KEY_PASSWORD") as String?)
+    ?: ""
+val hasFixedKeystore: Boolean = fixedKeystoreFile.isNotBlank() && File(fixedKeystoreFile).exists()
+
 val driveOauthClientId: String = configValue("GOOGLE_OAUTH_CLIENT_ID")
 
 /** `com.googleusercontent.apps.<client-id>` or a harmless fallback. */
@@ -85,6 +102,14 @@ android {
     ndkVersion = "27.3.13750724"
 
     signingConfigs {
+        if (hasFixedKeystore) {
+            create("fixed") {
+                storeFile = file(fixedKeystoreFile)
+                storePassword = fixedKeystorePassword
+                keyAlias = fixedKeyAlias
+                keyPassword = fixedKeyPassword
+            }
+        }
         create("pluvia") {
             if (keystoreProperties != null) {
                 storeFile = file(keystoreProperties["storeFile"].toString())
@@ -210,7 +235,11 @@ android {
             isDebuggable = true
             isMinifyEnabled = false
             isShrinkResources = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasFixedKeystore) {
+                signingConfigs.getByName("fixed")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
         release {
             isMinifyEnabled = true
