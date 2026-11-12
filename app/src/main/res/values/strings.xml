@@ -3353,4 +3353,12 @@
     <string name="drive_state_deleted">Deleted</string>
     <string name="drive_action_restore">Restore</string>
     <string name="drive_auto_upload">Upload finished files automatically</string>
+    <string name="drive_login_running">Choose your account in the browser…</string>
+    <string name="drive_login_failed">Sign-in failed: %1$s</string>
+    <string name="drive_config_required">Set the OAuth client ID and secret first.</string>
+    <string name="drive_config_hint">Paste the Google OAuth client (type: Desktop app) from your Google Cloud project. You can also bake it into the build with GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET in local.properties.</string>
+    <string name="drive_config_client_id">Client ID</string>
+    <string name="drive_config_client_secret">Client secret</string>
+    <string name="drive_config_save">Save and sign in</string>
+    <string name="drive_config_edit">OAuth client settings</string>
 </resources>

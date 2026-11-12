@@ -1,17 +1,6 @@
 package app.gamenative.service.drive
 
-import android.accounts.Account
-import android.app.Activity
 import android.content.Context
-import android.content.Intent
-import com.google.android.gms.auth.GoogleAuthUtil
-import com.google.android.gms.auth.UserRecoverableAuthException
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInAccount
-import com.google.android.gms.auth.api.signin.GoogleSignInClient
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
-import com.google.android.gms.common.api.Scope
-import com.google.android.gms.tasks.Tasks
 import com.google.api.client.googleapis.json.GoogleJsonResponseException
 import com.google.api.client.googleapis.services.AbstractGoogleClientRequest
 import com.google.api.client.http.HttpRequest
@@ -19,125 +8,82 @@ import com.google.api.client.http.HttpRequestInitializer
 import com.google.api.client.http.javanet.NetHttpTransport
 import com.google.api.client.json.gson.GsonFactory
 import com.google.api.services.drive.Drive
-import com.google.api.services.drive.DriveScopes
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 /**
- * Manages Google sign-in and access tokens for the Drive pseudo-SSD.
+ * Supplies Drive access tokens and builds Drive API clients.
  *
- * Multiple Google accounts can be registered. Each Drive request resolves a
- * short-lived OAuth access token for the account's email via [GoogleAuthUtil]
- * (AccountManager caching handles refreshes), so no long-lived secrets are
- * stored by the app.
+ * Sign-in itself lives in [DriveOAuthClient] (browser + PKCE), which keeps a
+ * refresh token per account; this manager caches short-lived access tokens in
+ * memory and transparently refreshes them.
  */
 object DriveAuthManager {
 
-    /** OAuth scope granting access to files created by this app. */
-    val DRIVE_SCOPE: Scope = Scope(DriveScopes.DRIVE_FILE)
+    private const val CONNECT_TIMEOUT_MS = 60_000
+    private const val READ_TIMEOUT_MS = 0
 
-    private const val GOOGLE_ACCOUNT_TYPE = "com.google"
+    private data class CachedToken(val token: String, val expiresAt: Long)
 
-    /** Cache of account email -> access token (tokens last ~1 hour). */
-    private val tokenCache = ConcurrentHashMap<String, String>()
+    private val cache = ConcurrentHashMap<String, CachedToken>()
 
-    /**
-     * Set when Google requires the user to grant the Drive scope again.
-     * The UI can launch this intent to finish the consent flow.
-     */
-    @Volatile
-    var pendingConsentIntent: Intent? = null
-        private set
+    /** True when the OAuth client (ID + secret) is configured. */
+    fun isConfigured(): Boolean = DriveOAuthClient.isConfigured()
 
-    private val signInOptions: GoogleSignInOptions
-        get() = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestEmail()
-            .requestProfile()
-            .requestScopes(DRIVE_SCOPE)
-            .build()
-
-    fun signInClient(context: Context): GoogleSignInClient =
-        GoogleSignIn.getClient(context, signInOptions)
-
-    /** Intent that launches the Google account picker / sign-in flow. */
-    fun signInIntent(context: Context): Intent = signInClient(context).signInIntent
-
-    /** Converts a completed sign-in result into a [DriveAccount]. */
-    fun accountFromSignIn(account: GoogleSignInAccount): DriveAccount {
-        val email = account.email ?: "unknown"
-        return DriveAccount(
-            id = DriveAccountStore.newId(),
-            email = email,
-            displayName = account.displayName,
-            photoUrl = account.photoUrl?.toString(),
-        )
-    }
-
-    /** Signs out the currently active Google account (allows adding another). */
-    suspend fun signOut(context: Context) = withContext(Dispatchers.IO) {
-        try {
-            Tasks.await(signInClient(context).signOut())
-        } catch (e: Exception) {
-            Timber.w(e, "DriveAuthManager: sign out failed")
-        }
-    }
-
-    /** Revokes access for the currently active Google account. */
-    suspend fun revokeAccess(context: Context) = withContext(Dispatchers.IO) {
-        try {
-            Tasks.await(signInClient(context).revokeAccess())
-            tokenCache.clear()
-        } catch (e: Exception) {
-            Timber.w(e, "DriveAuthManager: revoke access failed")
-        }
+    /** Drops a cached access token (e.g. after a 401 from Drive). */
+    fun invalidateToken(email: String) {
+        cache.remove(email)
     }
 
     /**
-     * Returns a Drive access token for [email], refreshing when necessary.
-     * Must not be called on the main thread.
+     * Returns an access token for [account], refreshing it when expired.
      *
-     * @return the token, or null when the user must grant consent again.
+     * @return the token, or null when the account has to sign in again.
      */
-    fun accessToken(context: Context, email: String, forceRefresh: Boolean = false): String? {
+    suspend fun accessToken(
+        context: Context,
+        account: DriveAccount,
+        forceRefresh: Boolean = false,
+    ): String? {
+        val now = System.currentTimeMillis()
         if (!forceRefresh) {
-            tokenCache[email]?.let { return it }
+            cache[account.email]?.let { cached ->
+                if (cached.expiresAt > now) return cached.token
+            }
         }
         return try {
-            val account = Account(email, GOOGLE_ACCOUNT_TYPE)
-            val scope = "oauth2:${DriveScopes.DRIVE_FILE}"
-            val token = GoogleAuthUtil.getToken(context, account, scope)
-            tokenCache[email] = token
-            token
-        } catch (e: UserRecoverableAuthException) {
-            // The user has to re-approve the Drive scope.
-            pendingConsentIntent = e.intent
-            Timber.w(e, "DriveAuthManager: consent required for $email")
-            null
+            val tokens = DriveOAuthClient.refresh(account)
+            cache[account.email] = CachedToken(tokens.accessToken, tokens.expiresAt)
+            tokens.accessToken
         } catch (e: Exception) {
-            Timber.w(e, "DriveAuthManager: could not obtain token for $email")
+            Timber.w(e, "DriveAuthManager: token refresh failed for ${account.email}")
             null
         }
     }
 
-    /** Drops a cached token (called after a 401 from Drive). */
-    fun invalidateToken(email: String) {
-        tokenCache.remove(email)
+    /** Blocking variant used by the Drive client's request initializer. */
+    private fun accessTokenBlocking(context: Context, account: DriveAccount): String? {
+        val now = System.currentTimeMillis()
+        cache[account.email]?.let { cached ->
+            if (cached.expiresAt > now) return cached.token
+        }
+        return runBlocking { accessToken(context, account) }
     }
 
-    /** Builds a Drive service bound to [account]'s email. */
+    /** Builds a Drive service bound to [account]. */
     fun driveService(context: Context, account: DriveAccount): Drive {
         val appContext = context.applicationContext
         val initializer = HttpRequestInitializer { request: HttpRequest ->
-            val token = accessToken(appContext, account.email)
-                ?: accessToken(appContext, account.email, forceRefresh = true)
+            val token = accessTokenBlocking(appContext, account)
             if (token != null) {
                 request.headers.authorization = "Bearer $token"
             }
             request.connectTimeout = CONNECT_TIMEOUT_MS
-            // Large uploads can legitimately idle; let the uploader manage it.
+            // Large uploads may idle for a while; the uploader handles retries.
             request.readTimeout = READ_TIMEOUT_MS
         }
 
@@ -150,11 +96,11 @@ object DriveAuthManager {
             .build()
     }
 
-    /** Returns the Drive service, or null when the account is not usable. */
+    /** Returns the Drive service, or null when the account cannot be used. */
     suspend fun driveServiceOrNull(context: Context, account: DriveAccount): Drive? =
         withContext(Dispatchers.IO) {
             try {
-                if (accessToken(context, account.email) == null) return@withContext null
+                if (accessToken(context, account) == null) return@withContext null
                 driveService(context, account)
             } catch (e: Exception) {
                 Timber.w(e, "DriveAuthManager: could not build Drive service for ${account.email}")
@@ -163,7 +109,7 @@ object DriveAuthManager {
         }
 
     /**
-     * Executes a Drive API request, translating recoverable auth failures.
+     * Executes a Drive API request, refreshing the token once on 401.
      * Returns null on failure instead of throwing.
      */
     suspend fun <T> execute(
@@ -193,10 +139,4 @@ object DriveAuthManager {
             null
         }
     }
-
-    private const val CONNECT_TIMEOUT_MS = 60_000
-    private const val READ_TIMEOUT_MS = 0
-
-    /** Exposed for the consent flow: an [Activity] is required to launch it. */
-    fun consentIntent(): Intent? = pendingConsentIntent
 }

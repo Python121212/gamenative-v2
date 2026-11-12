@@ -24,6 +24,20 @@ val keystoreProperties: Properties? = if (keystorePropertiesFile.exists()) {
 val posthogApiKey: String = project.findProperty("POSTHOG_API_KEY") as String? ?: System.getenv("POSTHOG_API_KEY") ?: ""
 val posthogHost: String = project.findProperty("POSTHOG_HOST") as String? ?: System.getenv("POSTHOG_HOST") ?: "https://us.i.posthog.com"
 
+// Values may come from local.properties, -P properties or the environment.
+val localProperties: Properties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        load(FileInputStream(file))
+    }
+}
+
+fun configValue(name: String): String =
+    (project.findProperty(name) as String?)
+        ?: System.getenv(name)
+        ?: localProperties.getProperty(name)
+        ?: ""
+
 val metaAppId: String = project.findProperty("META_APP_ID") as String? ?: System.getenv("META_APP_ID") ?: ""
 val productSku: String = project.findProperty("PRODUCT_SKU") as String? ?: System.getenv("PRODUCT_SKU") ?: ""
 
@@ -75,7 +89,10 @@ android {
         buildConfigField("String", "POSTHOG_HOST",  "\"${secret("POSTHOG_HOST")}\"")
         buildConfigField("String", "REVENUECAT_API_KEY", "\"${secret("REVENUECAT_API_KEY").ifEmpty { "goog_iCoffJTvTFYjqalcgCdtXDErPQa" }}\"")
         buildConfigField("String", "STEAMGRIDDB_API_KEY", "\"${secret("STEAMGRIDDB_API_KEY")}\"")
-        buildConfigField("String", "CLOUD_PROJECT_NUMBER", "\"${secret("CLOUD_PROJECT_NUMBER")}\"")
+        buildConfigField("String", "CLOUD_PROJECT_NUMBER", "\"${configValue("CLOUD_PROJECT_NUMBER")}\"")
+        // Google Drive pseudo-SSD (OAuth "Desktop app" client).
+        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"${configValue("GOOGLE_OAUTH_CLIENT_ID")}\"")
+        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_SECRET", "\"${configValue("GOOGLE_OAUTH_CLIENT_SECRET")}\"")
         val iconValue = "@mipmap/ic_launcher"
         val iconRoundValue = "@mipmap/ic_launcher_round"
         manifestPlaceholders.putAll(

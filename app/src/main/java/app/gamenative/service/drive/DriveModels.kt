@@ -26,6 +26,11 @@ data class DriveAccount(
     val quotaUpdatedAt: Long = 0L,
     /** Whether this account is currently enabled for uploads. */
     val enabled: Boolean = true,
+    /**
+     * OAuth refresh token for this account, obtained once through the browser
+     * sign-in flow. Kept in app-private storage only.
+     */
+    val refreshToken: String? = null,
     /** Drive folder ID dedicated to this pseudo-SSD (created on first use). */
     val folderId: String? = null,
 ) {
