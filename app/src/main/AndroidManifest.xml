@@ -142,6 +142,27 @@
             </intent-filter>
         </activity>
 
+        <!-- Google Drive pseudo-SSD OAuth (external browser, Android client type).
+             The scheme is com.googleusercontent.apps.<client-id>:/oauth2redirect. -->
+        <activity
+            android:name=".service.drive.DriveOAuthRedirectActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:finishOnTaskLaunch="true"
+            android:launchMode="singleTop"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Pluvia.OAuthCallback">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="${driveOAuthScheme}" />
+            </intent-filter>
+        </activity>
+
         <!-- GOG OAuth (in-app WebView; intercepts redirect for automatic code capture) -->
         <activity
             android:name=".ui.screen.auth.GOGOAuthActivity"

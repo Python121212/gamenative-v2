@@ -48,7 +48,6 @@ jobs:
       - name: Inject credentials
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
-          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
         run: |
           # Never write empty values: the secrets plugin turns every entry of
           # local.properties into a BuildConfig field, and an empty one is
@@ -58,9 +57,6 @@ jobs:
             echo "POSTHOG_HOST=https://us.i.posthog.com"
             if [ -n "$GOOGLE_OAUTH_CLIENT_ID" ]; then
               echo "GOOGLE_OAUTH_CLIENT_ID=$GOOGLE_OAUTH_CLIENT_ID"
-            fi
-            if [ -n "$GOOGLE_OAUTH_CLIENT_SECRET" ]; then
-              echo "GOOGLE_OAUTH_CLIENT_SECRET=$GOOGLE_OAUTH_CLIENT_SECRET"
             fi
           } > local.properties
           sed 's/=.*/=<set>/' local.properties
@@ -107,6 +103,15 @@ jobs:
 
       - name: List APKs
         run: find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
+
+      # Needed to register an "Android" OAuth client for the Drive pseudo-SSD.
+      - name: Print signing certificate SHA-1
+        if: success()
+        run: |
+          APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
+          if [ -n "$APK" ]; then
+            keytool -printcert -jarfile "$APK" | grep -Ei "SHA1:|SHA-1:" || true
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

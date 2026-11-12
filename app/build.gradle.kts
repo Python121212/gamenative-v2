@@ -38,23 +38,29 @@ fun configValue(name: String): String =
         ?: localProperties.getProperty(name)
         ?: ""
 
-// Google Drive pseudo-SSD: the OAuth client (type "Desktop app") is baked in
-// as a generated asset so it can be empty without breaking the Java build.
+// Google Drive pseudo-SSD: the OAuth client (type "Android") is baked in as a
+// generated asset so it can be empty without breaking the Java build. The
+// redirect scheme is derived from the client ID, exactly like Google expects.
+val driveOauthClientId: String = configValue("GOOGLE_OAUTH_CLIENT_ID")
+
+/** `com.googleusercontent.apps.<client-id>` or a harmless fallback. */
+val driveOauthScheme: String = if (driveOauthClientId.isNotBlank()) {
+    "com.googleusercontent.apps.$driveOauthClientId"
+} else {
+    "app.gamenative.driveoauth"
+}
+
 val driveOauthAssetDir = layout.buildDirectory.dir("generated/driveOauth")
 val driveOauthAssetsPath: String = driveOauthAssetDir.get().asFile.absolutePath
 
 val generateDriveOauthConfig = tasks.register("generateDriveOauthConfig") {
     val outputDir = driveOauthAssetDir
-    val clientId = configValue("GOOGLE_OAUTH_CLIENT_ID")
-    val clientSecret = configValue("GOOGLE_OAUTH_CLIENT_SECRET")
+    val clientId = driveOauthClientId
     outputs.dir(outputDir)
     doLast {
         val file = outputDir.get().file("drive_oauth.json").asFile
         file.parentFile?.mkdirs()
-        file.writeText(
-            "{\"client_id\":" + "\"" + clientId + "\"," +
-                "\"client_secret\":" + "\"" + clientSecret + "\"}"
-        )
+        file.writeText("{\"client_id\":" + "\"" + clientId + "\"}")
     }
 }
 
@@ -116,6 +122,8 @@ android {
             mapOf(
                 "icon" to iconValue,
                 "roundIcon" to iconRoundValue,
+                // Custom scheme the browser redirects back to for Google OAuth.
+                "driveOAuthScheme" to driveOauthScheme,
             ),
         )
 

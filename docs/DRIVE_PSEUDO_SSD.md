@@ -16,7 +16,8 @@ Google Drive はファイルシステムではなくオブジェクトストレ�
 | --- | --- |
 | `service/drive/DriveModels.kt` | `DriveAccount` / `DriveFileEntry` / `DriveUploadTask` / 合計容量モデル |
 | `service/drive/DriveAccountStore.kt` | アカウント・ファイル索引・キューの JSON 永続化 (`drive_pseudo_ssd.json`) |
-| `service/drive/DriveOAuthClient.kt` | ブラウザでアカウント選択する OAuth + PKCE ログイン、トークン更新 |
+| `service/drive/DriveOAuthClient.kt` | ブラウザでアカウント選択する OAuth + PKCE ログイン（Android クライアント）、トークン更新 |
+| `service/drive/DriveOAuthRedirectActivity.kt` | ブラウザからのリダイレクト（カスタムスキーム）受け取り |
 | `service/drive/DriveAuthManager.kt` | アクセストークンのキャッシュと Drive サービス生成 |
 | `service/drive/DriveApiClient.kt` | Drive API（再開可能アップロード / ダウンロード / 削除 / 容量取得） |
 | `service/drive/DriveUploadQueue.kt` | 直列アップロードのワーカー（再試行3回、アカウント切替、SHA-256） |
@@ -53,17 +54,18 @@ DriveAutoBackup.enqueueIfEnabled(context, finishedFile)
 1. 設定 → **ストレージ** → **Google Drive 疑似SSD**
 2. **Googleアカウントを追加** を押す
 3. ブラウザが開くので **Google アカウントを選ぶ**（初回のみ「許可」をタップ）
-4. アプリに戻ると登録完了 — 以降はアカウントを増やすときだけ同じ操作
+4. 自動でアプリに戻り、登録完了 — 増やしたいときは同じ操作を繰り返す
 
 コード入力・パスワード入力・アプリ再起動は不要です。
 
 ### 仕組み
 
-- OAuth 2.0 **認可コード + PKCE**、リダイレクトは `http://127.0.0.1:<空きポート>`
-  （アプリ内で一時的にローカルHTTPサーバーを立てて受け取ります）
-- そのため **署名証明書（SHA-1）に縛られません**。1つのクライアントIDで、
-  どのビルド・誰の端末でも同じようにログインできます
-- 取得した **リフレッシュトークン** を使ってバックグラウンドのアップロードを継続
+- OAuth 2.0 **認可コード + PKCE**、OAuth クライアントの種類は **Android**
+- リダイレクトは `com.googleusercontent.apps.<クライアントID>:/oauth2redirect`
+  → `DriveOAuthRedirectActivity` が受け取り、自動でアプリに戻ります
+- Android クライアントは **パブリッククライアント**なので、
+  **クライアントシークレットは不要**（APK に秘密を埋め込みません）
+- 取得した **リフレッシュトークン** でバックグラウンドのアップロードを継続
 - リフレッシュトークンはアプリ専用領域の `drive_pseudo_ssd.json` にのみ保存
 
 ## 事前準備（Google Cloud / OAuth）— 1回だけ
@@ -71,29 +73,49 @@ DriveAutoBackup.enqueueIfEnabled(context, finishedFile)
 1. Google Cloud Console でプロジェクトを作成
 2. **Google Drive API** を有効化
 3. **OAuth 同意画面** を設定し、スコープ `.../auth/drive.file` を追加
-4. **認証情報 → OAuth クライアント ID → アプリの種類: デスクトップ アプリ** を作成
-5. 発行された **クライアントID / クライアントシークレット** を次のどちらかで設定
+4. **認証情報 → OAuth クライアント ID → アプリの種類: Android** を作成
+   - パッケージ名: `app.gamenative`
+   - SHA-1: ビルドした APK の署名証明書フィンガープリント
+5. 発行された **クライアントID** をビルドに設定
+   ```
+   # local.properties
+   GOOGLE_OAUTH_CLIENT_ID=xxxxxxxx.apps.googleusercontent.com
+   ```
+   GitHub Actions の場合は Secrets の `GOOGLE_OAUTH_CLIENT_ID` に登録すれば
+   ビルド時に自動で埋め込まれます。
 
-   - **アプリ内**: 設定 → Google Drive 疑似SSD → *OAuth クライアント設定* に貼り付け
-   - **ビルドに埋め込む**: `local.properties` に追記（配布APKはこちらが便利）
-     ```
-     GOOGLE_OAUTH_CLIENT_ID=xxxxxxxx.apps.googleusercontent.com
-     GOOGLE_OAUTH_CLIENT_SECRET=xxxxxxxx
-     ```
-     GitHub Actions でビルドする場合は Secrets の
-     `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` に登録すれば自動で埋め込まれます。
+> **クライアントIDはビルド時に埋め込む必要があります。**
+> リダイレクトのスキーム名がクライアントIDから決まるため、後からアプリ内で
+> 貼り付ける方式は使えません。
 
-> デスクトップ アプリ種別のクライアントは SHA-1 登録が不要なので、
-> ビルドごとに署名が変わるデバッグAPKでも設定をやり直す必要がありません。
+### SHA-1 の確認方法
+
+署名が一致しないとログインできません（`DEVELOPER_ERROR`）。
+
+```bash
+# ビルド済み APK から
+keytool -printcert -jarfile gamenative-legacy-debug.apk | grep SHA1
+
+# キーストアから
+keytool -list -v -keystore <keystore> -alias <alias> | grep SHA1
+```
+
+Actions のビルドでは **`Print signing certificate SHA-1`** ステップが
+APK の SHA-1 をログに出力します。
+
+> **重要**: 既定の debug keystore はビルド環境ごとに作り直されるため、
+> CI のビルドは毎回 SHA-1 が変わります。継続的に使うなら
+> **固定の keystore を Secrets で管理して署名**するか、
+> ビルドのたびに新しい SHA-1 を Google Cloud に追加してください。
 
 ### 他の人もログインできる？
 
-- **できます。** 同じAPK・同じクライアントIDのままで、各自が自分の Google アカウントを
-  選ぶだけです（SHA-1 登録は不要）
-- ただし同意画面が **テスト** のままだと、コンソールで「テストユーザー」に追加した
+- 同じ APK（同じ署名）を配れば、**各自が自分の Google アカウントを選ぶだけ**で使えます
+- 同意画面が **テスト** のままだと、コンソールで「テストユーザー」に追加した
   アカウント（最大100）しかログインできません。**本番（In production）** にすると
   誰でもログインできます（制限付きスコープのため未審査の間は警告画面が出ます）
 - **テスト** 状態のリフレッシュトークンは7日で失効します。常用するなら本番に切り替えてください
+- 各自が自分でビルドする場合は、そのビルドの SHA-1 を Google Cloud に追加する必要があります
 
 ## 動作の詳細
 

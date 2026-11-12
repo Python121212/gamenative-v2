@@ -3318,10 +3318,6 @@
     <string name="drive_auto_upload">書き終えたファイルを自動でアップロード</string>
     <string name="drive_login_running">ブラウザでアカウントを選択してください…</string>
     <string name="drive_login_failed">ログインに失敗しました: %1$s</string>
-    <string name="drive_config_required">先に OAuth クライアントIDとシークレットを設定してください。</string>
-    <string name="drive_config_hint">Google Cloud で作成した OAuth クライアント（種類: デスクトップ アプリ）の値を貼り付けてください。local.properties に GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET を書いてビルドに埋め込むこともできます。</string>
-    <string name="drive_config_client_id">クライアントID</string>
-    <string name="drive_config_client_secret">クライアントシークレット</string>
-    <string name="drive_config_save">保存してログイン</string>
-    <string name="drive_config_edit">OAuth クライアント設定</string>
+    <string name="drive_config_required">このビルドには OAuth クライアントIDが入っていません。GOOGLE_OAUTH_CLIENT_ID を設定して再ビルドしてください。</string>
+    <string name="drive_config_hint">ビルド時の設定: Google Cloud で「アプリの種類: Android」の OAuth クライアントを作成し（パッケージ app.gamenative と、このビルドの SHA-1 を登録）、local.properties（または GitHub Secrets）の GOOGLE_OAUTH_CLIENT_ID に設定して再ビルドしてください。</string>
 </resources>
