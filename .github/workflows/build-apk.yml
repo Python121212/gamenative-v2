@@ -136,16 +136,27 @@ jobs:
       - name: List APKs
         run: find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
 
-      # Needed to register an "Android" OAuth client for the Drive pseudo-SSD.
-      - name: Print signing certificate SHA-1
+      # The signature must be the same for every CI build, otherwise updating an
+      # installed APK fails with "app not installed" (INSTALL_FAILED_UPDATE_INCOMPATIBLE).
+      # It also identifies the "Android" OAuth client used by the Drive pseudo-SSD.
+      - name: Verify APK signing key is stable
         if: success()
         run: |
+          EXPECTED="85:D8:C9:35:B6:83:91:AF:20:9B:7D:45:98:AE:1B:AC:3E:06:90:F2"
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)"
           APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
-          if [ -n "$APK" ]; then
-            SHA1=$(keytool -printcert -jarfile "$APK" | grep -Ei "SHA1:" | head -1 | sed 's/.*SHA1: //')
-            echo "APK SHA-1: $SHA1"
-            echo "::notice title=APK SHA-1::$SHA1"
+          if [ -z "$APK" ] || [ -z "$APKSIGNER" ]; then
+            echo "::warning::APK または apksigner が見つからないため署名を確認できません"
+            exit 0
           fi
+          ACTUAL=$("$APKSIGNER" verify --print-certs "$APK" | grep -i 'SHA-1 digest' | head -1 | sed 's/.*: //' | tr 'a-f' 'A-F')
+          echo "APK SHA-1: $ACTUAL"
+          echo "expected : $EXPECTED"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::APK の署名が固定鍵と一致しません（更新インストールに失敗します）: ${ACTUAL:-unknown} != $EXPECTED"
+            exit 1
+          fi
+          echo "::notice::APK signing SHA-1 is stable: $ACTUAL"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
