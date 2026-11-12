@@ -32,7 +32,7 @@ object DriveAuthManager {
     private val cache = ConcurrentHashMap<String, CachedToken>()
 
     /** True when the OAuth client (ID + secret) is configured. */
-    fun isConfigured(): Boolean = DriveOAuthClient.isConfigured()
+    fun isConfigured(context: Context): Boolean = DriveOAuthClient.isConfigured(context)
 
     /** Drops a cached access token (e.g. after a 401 from Drive). */
     fun invalidateToken(email: String) {
@@ -56,7 +56,7 @@ object DriveAuthManager {
             }
         }
         return try {
-            val tokens = DriveOAuthClient.refresh(account)
+            val tokens = DriveOAuthClient.refresh(context, account)
             cache[account.email] = CachedToken(tokens.accessToken, tokens.expiresAt)
             tokens.accessToken
         } catch (e: Exception) {

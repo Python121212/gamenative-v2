@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Base64
-import app.gamenative.BuildConfig
 import app.gamenative.PrefManager
 import app.gamenative.utils.Net
 import java.io.BufferedReader
@@ -70,19 +69,42 @@ object DriveOAuthClient {
     private const val SCOPE = "openid email profile https://www.googleapis.com/auth/drive.file"
     private const val LOGIN_TIMEOUT_MS = 180_000
     private const val TOKEN_MARGIN_MS = 60_000L
+    private const val ASSET_NAME = "drive_oauth.json"
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** Client ID configured in-app, otherwise the build-time default. */
-    fun clientId(): String =
-        PrefManager.driveOAuthClientId.ifBlank { BuildConfig.GOOGLE_OAUTH_CLIENT_ID }
+    @Volatile
+    private var assetConfig: Pair<String, String>? = null
 
-    /** Client secret configured in-app, otherwise the build-time default. */
-    fun clientSecret(): String =
-        PrefManager.driveOAuthClientSecret.ifBlank { BuildConfig.GOOGLE_OAUTH_CLIENT_SECRET }
+    /** Reads the OAuth client baked into the build (generated asset), if any. */
+    private fun bakedConfig(context: Context): Pair<String, String> {
+        assetConfig?.let { return it }
+        val loaded = try {
+            context.assets.open(ASSET_NAME).bufferedReader().use { it.readText() }
+                .let { json.parseToJsonElement(it).jsonObject }
+                .let { obj ->
+                    val id = obj["client_id"]?.jsonPrimitive?.content.orEmpty()
+                    val secret = obj["client_secret"]?.jsonPrimitive?.content.orEmpty()
+                    id to secret
+                }
+        } catch (e: Exception) {
+            "" to ""
+        }
+        assetConfig = loaded
+        return loaded
+    }
+
+    /** Client ID configured in-app, otherwise the one baked into the build. */
+    fun clientId(context: Context): String =
+        PrefManager.driveOAuthClientId.ifBlank { bakedConfig(context).first }
+
+    /** Client secret configured in-app, otherwise the one baked into the build. */
+    fun clientSecret(context: Context): String =
+        PrefManager.driveOAuthClientSecret.ifBlank { bakedConfig(context).second }
 
     /** True when a client ID and secret are available. */
-    fun isConfigured(): Boolean = clientId().isNotBlank() && clientSecret().isNotBlank()
+    fun isConfigured(context: Context): Boolean =
+        clientId(context).isNotBlank() && clientSecret(context).isNotBlank()
 
     fun saveConfig(clientId: String, clientSecret: String) {
         PrefManager.driveOAuthClientId = clientId.trim()
@@ -96,8 +118,8 @@ object DriveOAuthClient {
      * loopback redirect, so the user only has to tap their account.
      */
     suspend fun signIn(context: Context): DriveTokens {
-        val clientId = clientId()
-        val clientSecret = clientSecret()
+        val clientId = clientId(context)
+        val clientSecret = clientSecret(context)
         if (clientId.isBlank() || clientSecret.isBlank()) {
             throw DriveOAuthException("OAuth client is not configured")
         }
@@ -113,11 +135,11 @@ object DriveOAuthClient {
     }
 
     /** Exchanges a stored refresh token for a fresh access token. */
-    suspend fun refresh(account: DriveAccount): DriveTokens = withContext(Dispatchers.IO) {
+    suspend fun refresh(context: Context, account: DriveAccount): DriveTokens = withContext(Dispatchers.IO) {
         val refreshToken = account.refreshToken
             ?: throw DriveOAuthException("No refresh token for ${account.email}")
-        val clientId = clientId()
-        val clientSecret = clientSecret()
+        val clientId = clientId(context)
+        val clientSecret = clientSecret(context)
         if (clientId.isBlank() || clientSecret.isBlank()) {
             throw DriveOAuthException("OAuth client is not configured")
         }

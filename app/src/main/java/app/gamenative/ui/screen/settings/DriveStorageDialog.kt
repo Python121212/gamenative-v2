@@ -73,9 +73,9 @@ fun DriveStorageDialog(
     var error by remember { mutableStateOf<String?>(null) }
     var autoUpload by remember { mutableStateOf(PrefManager.drivePseudoSsdEnabled) }
 
-    var clientId by remember { mutableStateOf(DriveOAuthClient.clientId()) }
-    var clientSecret by remember { mutableStateOf(DriveOAuthClient.clientSecret()) }
-    var configured by remember { mutableStateOf(DriveOAuthClient.isConfigured()) }
+    var clientId by remember { mutableStateOf(DriveOAuthClient.clientId(context)) }
+    var clientSecret by remember { mutableStateOf(DriveOAuthClient.clientSecret(context)) }
+    var configured by remember { mutableStateOf(DriveOAuthClient.isConfigured(context)) }
     var showConfig by remember { mutableStateOf(!configured) }
     val configRequiredMessage = stringResource(R.string.drive_config_required)
 
@@ -195,7 +195,7 @@ fun DriveStorageDialog(
                     TextButton(
                         onClick = {
                             DriveOAuthClient.saveConfig(clientId, clientSecret)
-                            configured = DriveOAuthClient.isConfigured()
+                            configured = DriveOAuthClient.isConfigured(context)
                             if (configured) {
                                 showConfig = false
                                 startSignIn()
