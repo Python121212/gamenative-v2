@@ -81,24 +81,21 @@ jobs:
       - name: Report build errors
         if: failure()
         run: |
-          if [ ! -f gradle-build.log ]; then exit 0; fi
-          # Emit Kotlin/Gradle errors (with their continuation lines) as check
-          # annotations so they can be read through the API.
-          awk '/^e: /{n++} n>0 && n<=8 {print}' gradle-build.log | head -n 60 | \
-            while IFS= read -r line; do
-              escaped=$(printf '%s' "$line" | tr '%\r\n' '    ')
-              echo "::error::$escaped"
-            done
-          awk '/What went wrong\??:/{p=1;c=0} p&&c<25{print;c++}' gradle-build.log | \
-            while IFS= read -r line; do
-              escaped=$(printf '%s' "$line" | tr '%\r\n' '    ')
-              echo "::error::$escaped"
-            done
-          # Dump the generated BuildConfig so quoting problems are visible.
+          emit() { echo "::error::$1"; }
+          emit "HEAD=$(git rev-parse --short HEAD) $(git log -1 --format=%s)"
+          grep -n 'GOOGLE_OAUTH' app/build.gradle.kts | while IFS= read -r l; do emit "GRADLE| $l"; done
           BC="app/build/generated/source/buildConfig/legacy/debug/app/gamenative/BuildConfig.java"
-          if [ -f "$BC" ]; then sed -n '10,25p' "$BC" | while IFS= read -r l; do echo "::error::BC| $l"; done; fi
-          grep -n 'GOOGLE_OAUTH' app/build.gradle.kts | while IFS= read -r l; do echo "::error::GRADLE| $l"; done
-          tail -n 40 gradle-build.log
+          if [ -f "$BC" ]; then
+            sed -n '13,22p' "$BC" | while IFS= read -r l; do emit "BC| $l"; done
+          else
+            emit "BC| (not generated)"
+          fi
+          if [ -f gradle-build.log ]; then
+            awk '/^e: /{n++} n>0 && n<=6 {print}' gradle-build.log | head -n 40 | while IFS= read -r line; do
+              emit "$(printf '%s' "$line" | tr '%\r\n' '    ')"
+            done
+            tail -n 30 gradle-build.log
+          fi
 
       - name: List APKs
         run: find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
