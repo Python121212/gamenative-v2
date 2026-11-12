@@ -84,7 +84,7 @@ jobs:
               escaped=$(printf '%s' "$line" | tr '%\r\n' '    ')
               echo "::error::$escaped"
             done
-          grep -E "Could not resolve|Could not find|Required by:|FAILURE:|What went wrong" gradle-build.log | head -n 10 | \
+          awk '/What went wrong\??:/{p=1;c=0} p&&c<25{print;c++}' gradle-build.log | \
             while IFS= read -r line; do
               escaped=$(printf '%s' "$line" | tr '%\r\n' '    ')
               echo "::error::$escaped"
