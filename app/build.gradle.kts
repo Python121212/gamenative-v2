@@ -58,6 +58,23 @@ val fixedKeyPassword: String = System.getenv("KEY_PASSWORD")
     ?: ""
 val hasFixedKeystore: Boolean = fixedKeystoreFile.isNotBlank() && File(fixedKeystoreFile).exists()
 
+// Stable debug signing for CI. Without this, every runner creates a fresh
+// ~/.android/debug.keystore, so two CI builds have different signatures and
+// "install over the previous build" fails with "app not installed"
+// (INSTALL_FAILED_UPDATE_INCOMPATIBLE). The committed key is a *debug* key:
+// not a secret, never used for release builds, and only there to keep the
+// signature (and therefore the SHA-1 an "Android" OAuth client needs) stable.
+// Override it with KEYSTORE_FILE / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD.
+val ciDebugKeystore = rootProject.file("ci-signing/gamenative-ci-debug.p12")
+val ciDebugStorePassword = "gamenative-ci"
+val ciDebugKeyAlias = "gamenative-ci"
+val hasCiDebugKeystore: Boolean = ciDebugKeystore.isFile
+
+// 反復用: `-PfastRelease` を付けると R8 とリソース圧縮を切る。
+// リリース変種（release / release-signed / release-gold）は通常 15〜30 分かかるが、
+// 「まず動く APK が欲しい」ときはこれで数分で作れる（配布物には使わない）。
+val fastRelease: Boolean = providers.gradleProperty("fastRelease").isPresent
+
 val driveOauthClientId: String = configValue("GOOGLE_OAUTH_CLIENT_ID")
 
 /** `com.googleusercontent.apps.<client-id>` or a harmless fallback. */
@@ -110,6 +127,15 @@ android {
                 keyPassword = fixedKeyPassword
             }
         }
+        if (hasCiDebugKeystore) {
+            create("ciDebug") {
+                storeFile = ciDebugKeystore
+                storeType = "PKCS12"
+                storePassword = ciDebugStorePassword
+                keyAlias = ciDebugKeyAlias
+                keyPassword = ciDebugStorePassword
+            }
+        }
         create("pluvia") {
             if (keystoreProperties != null) {
                 storeFile = file(keystoreProperties["storeFile"].toString())
@@ -141,6 +167,19 @@ android {
         buildConfigField("String", "REVENUECAT_API_KEY", "\"${secret("REVENUECAT_API_KEY").ifEmpty { "goog_iCoffJTvTFYjqalcgCdtXDErPQa" }}\"")
         buildConfigField("String", "STEAMGRIDDB_API_KEY", "\"${secret("STEAMGRIDDB_API_KEY")}\"")
         buildConfigField("String", "CLOUD_PROJECT_NUMBER", "\"${secret("CLOUD_PROJECT_NUMBER")}\"")
+        // AI error diagnosis (OpenAI-compatible). Empty key = rule-based diagnosis only,
+        // which is the safe default: nothing leaves the device unless a key is configured.
+        buildConfigField(
+            "String",
+            "AI_DIAGNOSTICS_ENDPOINT",
+            "\"${secret("AI_DIAGNOSTICS_ENDPOINT").ifEmpty { "https://api.openai.com/v1/chat/completions" }}\"",
+        )
+        buildConfigField(
+            "String",
+            "AI_DIAGNOSTICS_MODEL",
+            "\"${secret("AI_DIAGNOSTICS_MODEL").ifEmpty { "gpt-4o-mini" }}\"",
+        )
+        buildConfigField("String", "AI_DIAGNOSTICS_API_KEY", "\"${secret("AI_DIAGNOSTICS_API_KEY")}\"")
         val iconValue = "@mipmap/ic_launcher"
         val iconRoundValue = "@mipmap/ic_launcher_round"
         manifestPlaceholders.putAll(
@@ -235,25 +274,25 @@ android {
             isDebuggable = true
             isMinifyEnabled = false
             isShrinkResources = false
-            signingConfig = if (hasFixedKeystore) {
-                signingConfigs.getByName("fixed")
-            } else {
-                signingConfigs.getByName("debug")
+            signingConfig = when {
+                hasFixedKeystore -> signingConfigs.getByName("fixed")
+                hasCiDebugKeystore -> signingConfigs.getByName("ciDebug")
+                else -> signingConfigs.getByName("debug")
             }
         }
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = !fastRelease
+            isShrinkResources = !fastRelease
             signingConfig = signingConfigs.getByName("debug")
         }
         create("release-signed") {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = !fastRelease
+            isShrinkResources = !fastRelease
             signingConfig = signingConfigs.getByName("pluvia")
         }
         create("release-gold") {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = !fastRelease
+            isShrinkResources = !fastRelease
             signingConfig = signingConfigs.getByName("pluvia")
             applicationIdSuffix = ".gold"
             buildConfigField("boolean", "GOLD", "true")

@@ -81,6 +81,9 @@ import app.gamenative.R
 import app.gamenative.optimize.OptimizeCards
 import app.gamenative.optimize.OptimizeController
 import app.gamenative.shadercache.FossilizeManager
+import app.gamenative.aidiag.DiagnosisService
+import app.gamenative.translation.TranslationStackApplier
+import app.gamenative.translation.TranslationStackResolver
 import app.gamenative.ui.util.applyScreenEffectsConfig
 import app.gamenative.ui.util.loadScreenEffectsConfig
 import androidx.core.content.ContextCompat
@@ -4729,6 +4732,16 @@ private fun setupXEnvironment(
         environment.addComponent(VortekRendererComponent(xServer, UnixSocketConfig.createSocket(rootPath, UnixSocketConfig.VORTEK_SERVER_PATH), options2, context))
     }
 
+    // 多重翻訳の除去: 有効でない翻訳レイヤー（CPU 翻訳・D3D 翻訳・Windows ランタイム）の環境変数を
+    // 落としてから起動する。判定は TranslationStackResolver が設定値から 1 本の計画として行う。
+    TranslationStackApplier.applyToFinalEnv(
+        container = container,
+        envVars = envVars,
+        isArm64Ec = runCatching { xServerState.value.wineInfo.isArm64EC() }.getOrDefault(false),
+        dxwrapperId = xServerState.value.dxwrapper,
+        shareDirPath = runCatching { imageFs.getShareDir().path }.getOrNull(),
+    )
+
     guestProgramLauncherComponent.envVars = EnvVars().apply { putAll(envVars) }
 
     val gameTerminationCallback = Callback<Int> { status ->
@@ -4738,6 +4751,13 @@ private fun setupXEnvironment(
         }
         if (status != 0) {
             Timber.e("Guest program terminated with status: $status")
+            // 異常終了を自動診断（端末内のルール判定 → 設定があれば AI）。起動/終了はブロックしない。
+            DiagnosisService.requestDiagnosis(
+                context = context,
+                container = container,
+                exitReason = "exit_$status",
+                tail = GuestOutputTail.snapshot(),
+            )
             onGameLaunchError?.invoke("Game terminated with error status: $status")
         }
         PluviaApp.events.emit(AndroidEvent.GuestProgramTerminated)
@@ -6363,7 +6383,18 @@ private suspend fun extractDXWrapperFiles(
             } else {
                 extractDXWrapperComponent(context, dxwrapper, windowsDir, onExtractFileListener)
             }
-            extractDXWrapperComponent(context, "d8vk-${DefaultVersion.D8VK}", windowsDir, onExtractFileListener)
+            // DXVK 2.0 以降は d3d8.dll を同梱しているので、単体の D8VK を重ねると D3D8 の翻訳が二重になる。
+            // 版が読めない場合と、ユーザー定義プロファイルの場合は保守的に従来どおり D8VK を入れる。
+            val appliedDxvkVersion = if (dxwrapper.startsWith("dxvk-")) {
+                dxwrapper.removePrefix("dxvk-")
+            } else {
+                DXVKHelper.parseConfig(container.getDXWrapperConfig()).get("version", DefaultVersion.DXVK)
+            }
+            if (profile != null || TranslationStackResolver.needsStandaloneD8vk(appliedDxvkVersion)) {
+                extractDXWrapperComponent(context, "d8vk-${DefaultVersion.D8VK}", windowsDir, onExtractFileListener)
+            } else {
+                Timber.i("Skipping D8VK: DXVK %s already provides d3d8.dll (single D3D8 translator)", appliedDxvkVersion)
+            }
         }
     }
 }
@@ -6624,7 +6655,10 @@ private suspend fun extractGraphicsDriverFiles(
         if (dxwrapper.contains("dxvk")) {
             DXVKHelper.setEnvVars(context, dxwrapperConfig, envVars)
         } else if (dxwrapper.contains("vkd3d")) {
+            // vkd3d の計画は D3D9〜11 用に DXVK の DLL も展開する。両方が 1 本の計画として
+            // 動くよう、vkd3d 側だけでなく DXVK 側の設定も必ず入れる。
             DXVKHelper.setVKD3DEnvVars(context, dxwrapperConfig, envVars)
+            DXVKHelper.setEnvVars(context, dxwrapperConfig, envVars)
         }
 
         if (graphicsDriver == "turnip") {
@@ -6757,7 +6791,9 @@ private suspend fun extractGraphicsDriverFiles(
                 envVars.put("WRAPPER_NO_PATCH_OPCONSTCOMP", "1")
             }
         } else if (dxwrapper.contains("vkd3d")) {
+            // 同上: vkd3d と一緒に動く DXVK も設定してから起動する。
             DXVKHelper.setVKD3DEnvVars(context, dxwrapperConfig, envVars)
+            DXVKHelper.setEnvVars(context, dxwrapperConfig, envVars)
         }
 
         val useDRI3: Boolean = container.isUseDRI3
