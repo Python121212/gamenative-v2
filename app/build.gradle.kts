@@ -32,6 +32,8 @@ val localProperties: Properties = Properties().apply {
     }
 }
 
+private const val QUOTE = "\""
+
 fun configValue(name: String): String =
     (project.findProperty(name) as String?)
         ?: System.getenv(name)
@@ -89,10 +91,13 @@ android {
         buildConfigField("String", "POSTHOG_HOST",  "\"${secret("POSTHOG_HOST")}\"")
         buildConfigField("String", "REVENUECAT_API_KEY", "\"${secret("REVENUECAT_API_KEY").ifEmpty { "goog_iCoffJTvTFYjqalcgCdtXDErPQa" }}\"")
         buildConfigField("String", "STEAMGRIDDB_API_KEY", "\"${secret("STEAMGRIDDB_API_KEY")}\"")
-        buildConfigField("String", "CLOUD_PROJECT_NUMBER", "\"${configValue("CLOUD_PROJECT_NUMBER")}\"")
-        // Google Drive pseudo-SSD (OAuth "Desktop app" client).
-        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"${configValue("GOOGLE_OAUTH_CLIENT_ID")}\"")
-        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_SECRET", "\"${configValue("GOOGLE_OAUTH_CLIENT_SECRET")}\"")
+        buildConfigField("String", "CLOUD_PROJECT_NUMBER", "\"${secret("CLOUD_PROJECT_NUMBER")}\"")
+        // Google Drive pseudo-SSD (OAuth "Desktop app" client). Both may be
+        // left empty; the user can then paste them in the app settings.
+        val googleOAuthClientId = configValue("GOOGLE_OAUTH_CLIENT_ID")
+        val googleOAuthClientSecret = configValue("GOOGLE_OAUTH_CLIENT_SECRET")
+        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", QUOTE + googleOAuthClientId + QUOTE)
+        buildConfigField("String", "GOOGLE_OAUTH_CLIENT_SECRET", QUOTE + googleOAuthClientSecret + QUOTE)
         val iconValue = "@mipmap/ic_launcher"
         val iconRoundValue = "@mipmap/ic_launcher_round"
         manifestPlaceholders.putAll(
