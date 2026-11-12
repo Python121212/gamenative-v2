@@ -44,7 +44,7 @@ timber = "5.0.1" # https://mvnrepository.com/artifact/com.jakewharton.timber/tim
 zstd-jni = "1.5.7-5" # https://mvnrepository.com/artifact/com.github.luben/zstd-jni
 zxing = "3.5.3" # https://mvnrepository.com/artifact/com.google.zxing/core
 playServicesAuth = "21.3.0" # https://mvnrepository.com/artifact/com.google.android.gms/play-services-auth
-googleApiServicesDrive = "v3-rev20240930-2.0.0" # https://mvnrepository.com/artifact/com.google.apis/google-api-services-drive
+googleApiServicesDrive = "v3-rev20250122-2.0.0" # https://mvnrepository.com/artifact/com.google.apis/google-api-services-drive
 googleHttpClientGson = "1.43.3" # https://mvnrepository.com/artifact/com.google.http-client/google-http-client-gson
 
 [libraries]
