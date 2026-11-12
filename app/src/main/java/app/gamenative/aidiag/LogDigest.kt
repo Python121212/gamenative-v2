@@ -34,7 +34,7 @@ object LogDigest {
 
     private val STEAM_ID = Regex("""\b7656\d{13}\b""")
 
-    /** 診断に寄与しないノイズ行。 */
+    /** 診断に寄与しないノイズ行（fixme/trace、wine の定型文、空行）。 */
     private val NOISE = Regex("""^(?:fixme|trace):|^wine: (?:created|read) new|^\s*$""", RegexOption.IGNORE_CASE)
 
     private val LINE_PREFIX = Regex("""^(?:\d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\d+\s+[A-Z]\s+\S+\s*:?\s*)""")
@@ -76,7 +76,8 @@ object LogDigest {
 
         for (rawLine in raw.lineSequence()) {
             val line = redact(LINE_PREFIX.replace(rawLine, ""))
-            if (NOISE.matches(line)) continue
+            // containsMatchIn: NOISE は行頭一致のパターンなので、全文一致では拾えない。
+            if (NOISE.containsMatchIn(line)) continue
             if (line == previous) {
                 repeat++
                 continue
