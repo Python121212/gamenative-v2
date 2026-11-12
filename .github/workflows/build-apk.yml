@@ -119,13 +119,16 @@ jobs:
           emit "HEAD=$(git rev-parse --short HEAD) $(git log -1 --format=%s)"
           if [ -f gradle-build.log ]; then
             echo "log lines: $(wc -l < gradle-build.log)"
-            PATTERN='^e: |error:|What went wrong|Execution failed for task|FAILURE:|Caused by:|Java heap space'
-            if grep -qE "$PATTERN" gradle-build.log; then
-              grep -nE "$PATTERN" gradle-build.log | head -n 10 | while IFS= read -r line; do emit "$line"; done
-            else
-              # Nothing matched: the last lines still show which task failed.
-              tail -n 10 gradle-build.log | while IFS= read -r line; do emit "TAIL| $line"; done
-            fi
+            # Kotlin errors first (`e: …`); they are the most actionable and there is a
+            # hard limit of ~10 annotations per step. Fall back to javac/Gradle messages.
+            for PATTERN in '^e: ' 'error:' 'Execution failed for task|What went wrong|Caused by:|Java heap space'; do
+              if grep -qE "$PATTERN" gradle-build.log; then
+                grep -nE "$PATTERN" gradle-build.log | head -n 10 | while IFS= read -r line; do emit "$line"; done
+                exit 0
+              fi
+            done
+            # Nothing matched: the last lines still show which task failed.
+            tail -n 10 gradle-build.log | while IFS= read -r line; do emit "TAIL| $line"; done
           else
             emit "gradle-build.log が見つかりません"
           fi

@@ -1,9 +1,7 @@
 package app.gamenative.aidiag
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
-import android.widget.Toast
+import app.gamenative.ui.util.SnackbarManager
 import app.gamenative.utils.CrashFingerprint
 import com.winlator.container.Container
 import com.winlator.core.KeyValueSet
@@ -38,7 +36,7 @@ object DiagnosisService {
      *
      * @param exitReason 例: `exit_1`。フィンガープリントの手がかりになる。
      * @param tail ゲストの標準出力/標準エラーの末尾（[app.gamenative.utils.GuestOutputTail.snapshot]）。
-     * @param notify true なら結果を Toast で短く知らせる。
+     * @param notify true なら結果を Snackbar で短く知らせる。
      */
     fun requestDiagnosis(
         context: Context,
@@ -52,7 +50,7 @@ object DiagnosisService {
             val diagnosis = runCatching { attempt(appContext, container, exitReason, tail) }
                 .onFailure { error -> Timber.tag(TAG).w(error, "診断に失敗しました（ゲームの終了処理は継続します）") }
                 .getOrNull()
-            if (diagnosis != null && notify) notifyUser(appContext, diagnosis)
+            if (diagnosis != null && notify) SnackbarManager.show(diagnosis.displayText())
         }
     }
 
@@ -141,9 +139,4 @@ object DiagnosisService {
         }.onFailure { error -> Timber.tag(TAG).w(error, "診断キャッシュを書けませんでした") }
     }
 
-    private fun notifyUser(context: Context, diagnosis: Diagnosis) {
-        Handler(Looper.getMainLooper()).post {
-            runCatching { Toast.makeText(context, diagnosis.displayText(), Toast.LENGTH_LONG).show() }
-        }
-    }
 }

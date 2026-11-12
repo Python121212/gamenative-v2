@@ -28,7 +28,7 @@ Diagnosis（推定原因＋対処＋確度）
    │
    ├─ files/aidiag/<hash>.json に保存（同じ失敗は 7 日間キャッシュ＝AI を二度呼ばない）
    ├─ Timber に 1 行（`診断 (source=RULE conf=0.75 dxvk/device_lost/…): …`）
-   └─ Toast に短く表示（推定原因と対処 2 件まで）
+   └─ Snackbar に短く表示（推定原因と対処 2 件まで）
 ```
 
 呼び出しは `XServerScreen` の異常終了ハンドラ 1 か所だけ。
@@ -139,7 +139,7 @@ CI（`Build APK (Debug)`）は `app.gamenative.aidiag.*` をコンパイルし�
 
 ## 今後
 
-- **UI**: 現在は Toast と Timber、ファイル保存のみ。クラッシュダイアログやサポート画面に
+- **UI**: 現在は Snackbar と Timber、ファイル保存のみ。クラッシュダイアログやサポート画面に
   「推定原因」と「対処を適用」ボタンを出す（`OptimizeApplier` と接続）と、そのまま直せるようになる。
 - **設定 UI**: API キーは現状ビルド時のみ。アプリ内設定（`PrefManager`）に移す。
 - **送信の同意**: AI を既定で有効にするなら、初回に「ログの一部（個人情報を除去）を送る」ことの同意を得る。
