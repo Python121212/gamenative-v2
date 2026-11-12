@@ -58,6 +58,18 @@ val fixedKeyPassword: String = System.getenv("KEY_PASSWORD")
     ?: ""
 val hasFixedKeystore: Boolean = fixedKeystoreFile.isNotBlank() && File(fixedKeystoreFile).exists()
 
+// Stable debug signing for CI. Without this, every runner creates a fresh
+// ~/.android/debug.keystore, so two CI builds have different signatures and
+// "install over the previous build" fails with "app not installed"
+// (INSTALL_FAILED_UPDATE_INCOMPATIBLE). The committed key is a *debug* key:
+// not a secret, never used for release builds, and only there to keep the
+// signature (and therefore the SHA-1 an "Android" OAuth client needs) stable.
+// Override it with KEYSTORE_FILE / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD.
+val ciDebugKeystore = rootProject.file("ci-signing/gamenative-ci-debug.p12")
+val ciDebugStorePassword = "gamenative-ci"
+val ciDebugKeyAlias = "gamenative-ci"
+val hasCiDebugKeystore: Boolean = ciDebugKeystore.isFile
+
 val driveOauthClientId: String = configValue("GOOGLE_OAUTH_CLIENT_ID")
 
 /** `com.googleusercontent.apps.<client-id>` or a harmless fallback. */
@@ -108,6 +120,15 @@ android {
                 storePassword = fixedKeystorePassword
                 keyAlias = fixedKeyAlias
                 keyPassword = fixedKeyPassword
+            }
+        }
+        if (hasCiDebugKeystore) {
+            create("ciDebug") {
+                storeFile = ciDebugKeystore
+                storeType = "PKCS12"
+                storePassword = ciDebugStorePassword
+                keyAlias = ciDebugKeyAlias
+                keyPassword = ciDebugStorePassword
             }
         }
         create("pluvia") {
@@ -248,10 +269,10 @@ android {
             isDebuggable = true
             isMinifyEnabled = false
             isShrinkResources = false
-            signingConfig = if (hasFixedKeystore) {
-                signingConfigs.getByName("fixed")
-            } else {
-                signingConfigs.getByName("debug")
+            signingConfig = when {
+                hasFixedKeystore -> signingConfigs.getByName("fixed")
+                hasCiDebugKeystore -> signingConfigs.getByName("ciDebug")
+                else -> signingConfigs.getByName("debug")
             }
         }
         release {
