@@ -2,7 +2,7 @@
 
 # GameNative
 
-**Play the PC games you already own — from Steam, Epic and GOG — on your Android device, with cloud saves.**
+**Steam・Epic・GOG で既に所有している PC ゲームを、クラウドセーブ付きで Android 端末で遊べます。**
 
 <a href="https://trendshift.io/repositories/14497" target="_blank"><img src="https://trendshift.io/api/badge/repositories/14497" alt="utkarshdalal%2FGameNative | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
@@ -20,7 +20,7 @@
 [![License](https://img.shields.io/badge/license-GPL%203.0-blue?style=flat-square)](https://github.com/utkarshdalal/GameNative/blob/master/LICENSE)
 [![Ko-fi](https://img.shields.io/badge/ko--fi-support-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/gamenative)
 
-[**Download**](https://github.com/utkarshdalal/GameNative/releases/download/v1.4.0/gamenative-v1.4.0.apk) · [**Discord**](https://discord.gg/2hKv4VfZfE) · [**Support on Ko-fi**](https://ko-fi.com/gamenative)
+[**ダウンロード**](https://github.com/utkarshdalal/GameNative/releases/download/v1.4.0/gamenative-v1.4.0.apk) · [**Discord**](https://discord.gg/2hKv4VfZfE) · [**Ko-fi で支援**](https://ko-fi.com/gamenative)
 
 <video src="https://github.com/user-attachments/assets/95b5397b-908a-44ef-a10a-dac7723580b0" autoplay loop muted playsinline width="100%"></video>
 
@@ -28,22 +28,22 @@
 
 ---
 
-GameNative lets you run the PC games in your Steam, Epic and GOG libraries directly on Android — no streaming required. Your saves sync to the cloud, so you can stop on your PC and keep going on your phone.
+GameNative は、Steam・Epic・GOG のライブラリにある PC ゲームを **ストリーミングなしで** Android 上で直接実行できるアプリです。セーブデータはクラウドに同期されるので、PC で中断してスマートフォンで続きを遊ぶ、といった使い方ができます。
 
-It's still early. Not every game runs yet, and some need tweaking to play well, but the community is constantly finding and sharing configs that work — and these get applied automatically. You can see if anyone has tried running your game successfully at https://gamenative.app/compatibility.
+まだ発展途上のプロジェクトです。すべてのゲームが動くわけではなく、快適に遊ぶには調整が必要なものもあります。ただしコミュニティが動作する設定を日々見つけて共有しており、それらは自動的に適用されます。自分のゲームを誰かが動かせたかどうかは https://gamenative.app/compatibility で確認できます。
 
-## What you get
+## できること
 
-- Play games you actually own on Steam, Epic, GOG and Amazon
-- Cloud saves that carry over between your PC and your phone
-- Automatically applied known configs, so many games just work out of the box with no tweaking required
-- Controller and touch support, with a custom control editor and on-screen HUD
-- Steam DLC, workshop and branch support
-- Active support over Discord if you need help getting a game running
+- Steam・Epic・GOG・Amazon で実際に所有しているゲームを遊べる
+- PC とスマートフォンの間で引き継げるクラウドセーブ
+- 既知の設定を自動適用するため、多くのゲームは調整なしである程度動く
+- コントローラーとタッチ操作の両対応（専用のコントロールエディタとオンスクリーン HUD 付き）
+- Steam の DLC・ワークショップ・ブランチに対応
+- ゲームが動かないときは Discord でサポートを受けられる
 
-## Demo
+## デモ
 
-[TechDweeb](https://www.youtube.com/@TechDweeb) walks through setting up GameNative on an Android handheld in a couple of minutes:
+[TechDweeb](https://www.youtube.com/@TechDweeb) が、Android ハンドヘルドへの GameNative のセットアップを数分で紹介しています:
 
 <div align="center">
 
@@ -51,80 +51,80 @@ It's still early. Not every game runs yet, and some need tweaking to play well, 
 
 </div>
 
-## How to use
+## 使い方
 
-1. Download the latest release [here](https://downloads.gamenative.app/releases/1.4.0/gamenative-v1.4.0.apk)
-2. Install the APK on your Android device
-3. Log in to your Steam account
-4. Install your game
-5. Hit play and enjoy
+1. [こちら](https://downloads.gamenative.app/releases/1.4.0/gamenative-v1.4.0.apk) から最新リリースをダウンロード
+2. Android 端末に APK をインストール
+3. Steam アカウントでログイン
+4. ゲームをインストール
+5. プレイ開始
 
-## Support
+## サポート
 
-The fastest way to get help is the [Discord server](https://discord.gg/2hKv4VfZfE) — we're 35k+ strong and someone's usually around.
+最も早いのは [Discord サーバー](https://discord.gg/2hKv4VfZfE) です。35,000 人以上のメンバーがいて、たいてい誰かが対応しています。
 
-Please **don't** open issues on GitHub; they're closed automatically. Bring it to Discord instead.
+GitHub の Issue は **作成しないでください**（自動的にクローズされます）。Discord で質問してください。
 
-If you'd like to chip in, you can support the project on [Ko-fi](https://ko-fi.com/gamenative).
+プロジェクトを支援したい場合は [Ko-fi](https://ko-fi.com/gamenative) からお願いします。
 
-## Contributing
+## コントリビューション
 
-Want to help out? Message us to get into the **#development** channel on [Discord](https://discord.gg/2hKv4VfZfE), or open a thread there. Things we're currently looking for help with live on our [Trello board](https://trello.com/b/vGRkFoAM/open-source-board).
+手伝ってくれる方は、[Discord](https://discord.gg/2hKv4VfZfE) で連絡して **#development** チャンネルに入るか、そこでスレッドを立ててください。現在募集している作業は [Trello ボード](https://trello.com/b/vGRkFoAM/open-source-board) にあります。
 
-### Fix a game that doesn't work
+### 動かないゲームを修正する
 
-Every night we publish the list of games that don't run in GameNative, built from real usage data, at [GameNative/gamenative-compat](https://github.com/GameNative/gamenative-compat). Each broken game has [an open issue](https://github.com/GameNative/gamenative-compat/issues?q=is%3Aopen+label%3Adoes-not-work) with the numbers behind it: how many players hit it, what they report, whether the game window ever renders.
+毎晩、実際の利用データから「GameNative で動かないゲーム」の一覧を [GameNative/gamenative-compat](https://github.com/GameNative/gamenative-compat) に公開しています。動かないゲームにはそれぞれ [Issue](https://github.com/GameNative/gamenative-compat/issues?q=is%3Aopen+label%3Adoes-not-work) があり、何人が遭遇したか、どんな報告があるか、ゲーム画面が描画されたことがあるか、といった数値が載っています。
 
-If you want to take one on:
+取り組む場合は次のとおりです:
 
-1. Pick a game from the list and open its issue. Check the comments to see whether someone is already on it, then leave a comment saying you are taking it.
-2. Work out why it fails. Most fixes land in this repo, in [proton-wine](https://github.com/GameNative/proton-wine), in [FEX](https://github.com/GameNative/FEX), in the GPU driver wrappers or in the per-game config.
-3. Open a pull request in the right repo, then comment on the game's issue with a link to it. Once the fix ships and players start getting the game to run, the issue closes itself.
+1. 一覧からゲームを選んで Issue を開きます。コメントで誰かが既に対応していないか確認し、担当する旨をコメントします。
+2. 失敗の原因を突き止めます。修正の多くはこのリポジトリ、[proton-wine](https://github.com/GameNative/proton-wine)、[FEX](https://github.com/GameNative/FEX)、GPU ドライバのラッパー、またはゲームごとの設定で行います。
+3. 適切なリポジトリでプルリクエストを作成し、そのリンクをゲームの Issue にコメントします。修正が配信されてプレイヤーが動かせるようになると、Issue は自動で閉じられます。
 
-Own a broken game and want to donate a key so someone can fix it? Email [support@gamenative.app](mailto:support@gamenative.app).
+動かないゲームを所有していて、修正してくれる人にキーを提供したい場合は [support@gamenative.app](mailto:support@gamenative.app) までメールしてください。
 
-### Building
+### ビルド
 
-Most of the time you don't need this — if you just want to play, grab the release above. This is for contributors.
+多くの場合、これは必要ありません。遊ぶだけなら上のリリースを使ってください。ここはコントリビューター向けの内容です。
 
-1. Build it like any normal Android Studio project. Ask on Discord if you get stuck.
-2. **SteamGridDB API key (optional):** to pull game artwork for custom games, add your key to `local.properties`:
+1. 通常の Android Studio プロジェクトと同様にビルドします。詰まったら Discord で聞いてください。
+2. **SteamGridDB API キー（任意）:** カスタムゲームのアートワークを取得するには、`local.properties` にキーを追加します:
    ```properties
    STEAMGRIDDB_API_KEY=your_api_key_here
    ```
-   You can get one from your [SteamGridDB preferences](https://www.steamgriddb.com/profile/preferences). Without it everything still works — it just won't fetch images.
+   キーは [SteamGridDB の設定](https://www.steamgriddb.com/profile/preferences) から取得できます。無くても動作しますが、画像の取得は行われません。
 
-## Analytics & privacy
+## 解析とプライバシー
 
-GameNative uses [PostHog](https://posthog.com) for anonymous analytics. No personal information is ever collected — no names, emails, IPs or device identifiers.
+GameNative は匿名の解析のために [PostHog](https://posthog.com) を利用しています。氏名・メールアドレス・IP アドレス・端末識別子などの個人情報は一切収集しません。
 
-**Always collected**, to improve game compatibility:
-- Game launch, close and exit events (game name, store, session length, average FPS, container config)
-- Game install, cancel and uninstall events
+**常に収集される情報**（ゲーム互換性の改善のため）:
+- ゲームの起動・終了・離脱イベント（ゲーム名、ストア、プレイ時間、平均 FPS、コンテナ設定）
+- ゲームのインストール・キャンセル・アンインストール イベント
 
-This is how we figure out which games work, how well they run, and which configs to apply automatically for the next person. It can't identify you.
+これにより、どのゲームが動くのか、どの程度快適に動くのか、次に使う人へどの設定を自動適用すべきかを判断しています。個人を特定できる情報ではありません。
 
-**Optional**, and switchable under *Settings → Info → Usage Analytics*:
-- Feature usage (on-screen keyboard, controller, HUD, control editor)
-- Login success/failure events
-- Recommendation interactions
-- App lifecycle events (foreground/background)
-- Cloud sync events
+**任意**で、*設定 → 情報 → 利用状況の解析* から切り替えできます:
+- 機能の利用状況（オンスクリーンキーボード、コントローラー、HUD、コントロールエディタ）
+- ログインの成功／失敗イベント
+- レコメンドの操作
+- アプリのライフサイクル（前面／背面）
+- クラウド同期イベント
 
-The full [Privacy Policy](PrivacyPolicy/README.md) has the details.
+詳細は [プライバシーポリシー](PrivacyPolicy/README.md) を参照してください。
 
-## Supporters
+## 支援者
 
-Thanks to our [Ko-fi sponsors](https://ko-fi.com/gamenative) and [GitHub sponsors](https://github.com/sponsors/utkarshdalal?preview=true), including [CodeRabbit](https://coderabbit.link/gnative).
+[Ko-fi スポンサー](https://ko-fi.com/gamenative) と [GitHub スポンサー](https://github.com/sponsors/utkarshdalal?preview=true)、そして [CodeRabbit](https://coderabbit.link/gnative) に感謝します。
 
 [![Star History Chart](https://star-history.dera.page/svg?repos=utkarshdalal/GameNative&type=Date&theme=dark)](https://star-history.dera.page/#utkarshdalal/GameNative&Date)
 
-## License
+## ライセンス
 
-[GPL 3.0](https://github.com/utkarshdalal/GameNative/blob/master/LICENSE).
+[GPL 3.0](https://github.com/utkarshdalal/GameNative/blob/master/LICENSE)。
 
-See [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) for attributions, copyleft source offers, and notices about third-party and proprietary components bundled with the app.
+サードパーティの帰属表示、コピーレフトのソース提供、および同梱されているサードパーティ／プロプライエタリ製コンポーネントに関する告知は [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) を参照してください。
 
 ---
 
-**Disclaimer:** This software is meant for playing games that you legally own. Don't use it for piracy or anything else illegal. The maintainer takes no responsibility for misuse.
+**免責事項:** 本ソフトウェアは、あなたが合法的に所有しているゲームを遊ぶためのものです。海賊版やその他の違法な目的には使用しないでください。メンテナーは不正使用について一切の責任を負いません。

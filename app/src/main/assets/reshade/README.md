@@ -1,43 +1,46 @@
-# Bundled ReShade effects
+# 同梱 ReShade エフェクト
 
-The effect set the app ships. gamescope provides only the ReShade compiler, so without these there is
-nothing to select.
+アプリが同梱しているエフェクト一式です。gamescope には ReShade のコンパイラのみが入っているため、
+これらが無いと選択できるエフェクトがありません。
 
-## Layout
+## 構成
 
 ```
-all_shaders.json      every effect the QuickMenu offers: {path, name}, sorted by name
-gamenative/           a pack: effects plus the ReShade.fxh they include
+all_shaders.json      QuickMenu が提供する全エフェクト: {path, name}（name 順）
+gamenative/           パック: エフェクト本体と、それらが include する ReShade.fxh
 ```
 
-An entry's `path` is relative to gamescope's `Shaders` directory, so `gamenative/Vivid.fx` resolves to
-`<files>/reshade/Shaders/gamenative/Vivid.fx`. `name` is what the QuickMenu shows.
+各エントリの `path` は gamescope の `Shaders` ディレクトリからの相対パスです。つまり
+`gamenative/Vivid.fx` は `<files>/reshade/Shaders/gamenative/Vivid.fx` に解決されます。
+`name` は QuickMenu に表示される名前です。
 
-## How it reaches gamescope
+## gamescope への反映方法
 
-At every gamescope launch the launcher rebuilds `<files>/reshade` from this directory — one
-`Shaders/<pack>` per subdirectory, the manifest at the root — and symlinks it into the container home
-as `~/.local/share/gamescope/reshade`, which is where gamescope looks. The rebuild is unconditional,
-so the APK is the only source of truth: a file removed here disappears on device at the next launch.
+gamescope を起動するたびに、ランチャーはこのディレクトリから `<files>/reshade` を再構築し
+（サブディレクトリごとに `Shaders/<pack>`、マニフェストはルート）、コンテナのホームに
+`~/.local/share/gamescope/reshade` としてシンボリックリンクします。gamescope はここを参照します。
+再構築は毎回無条件に行われるため、**APK が唯一の正**です。ここから削除したファイルは、
+次回起動時に端末上から消えます。
 
-An effect's `#include`s resolve against its own directory first, then against `Shaders/`, which is why
-`ReShade.fxh` sits inside the pack.
+エフェクトの `#include` はまず自身のディレクトリ、次に `Shaders/` を基準に解決されます。
+`ReShade.fxh` がパック内に入っているのはこのためです。
 
-## Adding an effect
+## エフェクトの追加方法
 
-Drop the `.fx` into a pack directory and add `{path, name}` to `all_shaders.json`. No code change.
-An effect that loads an image declares `texture <name> { source = "<file>"; };` and the file goes under
-`Textures/`, created on demand.
+`.fx` をパックディレクトリに置き、`all_shaders.json` に `{path, name}` を追加するだけです。
+コードの変更は不要です。画像を読み込むエフェクトは
+`texture <name> { source = "<file>"; };` を宣言し、ファイルは `Textures/` 配下に置きます
+（ディレクトリは必要に応じて作成されます）。
 
-## Limits
+## 制限
 
-- gamescope's ReShade support is a subset of ReShade 5: single-pass colour effects are safe, multi-pass
-  with render targets and compute passes are not guaranteed.
-- The depth buffer is not available in this port (`bufready_depth` is always false), so effects that
-  sample depth — SSAO, depth of field, depth-based anti-aliasing — cannot work.
-- One effect runs at a time; the QuickMenu rows behave as a radio group.
+- gamescope の ReShade 対応は ReShade 5 のサブセットです。単一パスの色調整系は安全ですが、
+  レンダーターゲットを使うマルチパスやコンピュートパスは保証されません。
+- この移植版では深度バッファが利用できません（`bufready_depth` は常に false）。そのため深度を
+  サンプリングするエフェクト（SSAO、被写界深度、深度ベースのアンチエイリアスなど）は動作しません。
+- 同時に有効化できるエフェクトは 1 つです。QuickMenu の行はラジオボタンのように動作します。
 
-## Provenance
+## 出典
 
-`gamenative/ReShade.fxh` is CC0-1.0 from crosire/reshade-shaders; its SPDX header is retained. The
-effects in `gamenative/` are written for GameNative.
+`gamenative/ReShade.fxh` は crosire/reshade-shaders の CC0-1.0 で、SPDX ヘッダーは保持しています。
+`gamenative/` 内のエフェクトは GameNative 向けに作成したものです。

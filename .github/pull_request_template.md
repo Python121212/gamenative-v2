@@ -1,17 +1,17 @@
-## Description
-<!-- What changed and why? -->
+## 概要
+<!-- 何を、なぜ変更したかを書いてください -->
 
-## Recording
-<!-- Attach a short recording/GIF showing the change -->
+## 録画
+<!-- 変更内容が分かる短い録画／GIF を添付してください -->
 
-## Type of Change
-- [ ] Bug fix
-- [ ] Performance / stability improvement
-- [ ] Compatibility improvements
-- [ ] Other (requires prior approval)
+## 変更の種類
+- [ ] バグ修正
+- [ ] パフォーマンス／安定性の改善
+- [ ] 互換性の改善
+- [ ] その他（事前承認が必要）
 
-## Checklist
-- [ ] If I have access to `#code-changes`, I have discussed this change there and it has been green-lighted. If I do not have access, I have still provided clear context in this PR. If I skip both, I accept that this change may face delays in review, may not be reviewed at all, or may be closed.
-- [ ] This change aligns with the current project scope (core functionality, stability, or performance). If not, it has been explicitly approved beforehand.
-- [ ] I have attached a recording of the change.
-- [ ] I have read and agree to the contribution guidelines in `CONTRIBUTING.md`.
+## チェックリスト
+- [ ] `#code-changes` にアクセスできる場合、そこでこの変更を相談し、承認（グリーンライト）を得ました。アクセスできない場合も、この PR に十分な文脈を記載しました。どちらも行わない場合、レビューが遅れる・レビューされない・クローズされる可能性があることを了承します。
+- [ ] この変更は現在のプロジェクト範囲（コア機能、安定性、パフォーマンス）に沿っています。沿っていない場合は、事前に明示的な承認を得ています。
+- [ ] 変更内容の録画を添付しました。
+- [ ] `CONTRIBUTING.md` のコントリビューションガイドラインを読み、同意しました。

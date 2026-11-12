@@ -1,223 +1,232 @@
-# Performance Control Architecture for GameNative
+# GameNative のパフォーマンス制御アーキテクチャ
 
-## Overview
+## 概要
 
-GameNative's performance control system provides CPU and GPU tuning capabilities for Android gaming devices. It supports multiple device types through an extensible driver architecture, including PServer-based devices (AYN Odin, Retroid Pocket) and Samsung Galaxy devices via the Samsung Performance SDK. The system allows users to adjust CPU governors, frequency scaling, and GPU performance levels to optimize game performance. Additionally, it features an **automatic performance tuning system** that uses PID controllers to dynamically adjust CPU/GPU settings based on target FPS and real-time utilization metrics, maintaining optimal performance while minimizing resource consumption.
+GameNative のパフォーマンス制御システムは、Android ゲーミング端末向けの CPU／GPU チューニング機能を
+提供します。拡張可能なドライバーアーキテクチャにより、PServer ベースの端末（AYN Odin、Retroid
+Pocket）や、Samsung Performance SDK を使った Samsung Galaxy 端末など、複数の種類の端末に対応します。
+ユーザーは CPU ガバナー、周波数スケーリング、GPU パフォーマンスレベルを調整してゲームの性能を
+最適化できます。さらに、PID コントローラーを使って目標 FPS とリアルタイムの使用率から CPU／GPU
+設定を動的に調整し、最適な性能を保ちつつリソース消費を最小化する**自動パフォーマンスチューニング
+システム**も備えています。
 
-## Architecture
+## アーキテクチャ
 
-### Core Components
+### 主要コンポーネント
 
-1. **PerformanceDriver** (Abstract Base Class)
-   - Location: `drivers/PerformanceDriver.kt`
-   - Defines the interface for all device-specific performance drivers
-   - Provides common functionality like frequency formatting
-   - **Abstract methods** (must be implemented):
-     - `isDriverSupported()` - Driver availability detection
-     - `getDisplayUnit()` - Returns display unit for frequency values (HZ or INTEGER)
-   - **Open methods with defaults** (can be overridden):
-     - `isGovernorSupported()` - CPU governor control support (default: false)
-     - `isGpuSupported()` - GPU control support (default: false)
-     - `isBusSupported()` - RAM bus control support (default: false)
-     - `isFanSupported()` - Fan control support (default: false)
-     - `start()` - Initialize driver when game starts (default: no-op)
-     - `stop()` - Cleanup driver when game stops (default: no-op)
-     - `beginUpdate()` - Begin batch update session (default: no-op)
-     - `commit()` - Commit pending updates (default: returns true)
-     - `getDefaultProfile()` - Returns default Balanced profile for the device
-     - CPU: `getCurrentMinCpuValue()`, `getCurrentMaxCpuValue()`, `getCurrentGovernor()`
-     - CPU: `setMinCpuValue(value)`, `setMaxCpuValue(value)`, `setGovernor(governor)`
-     - CPU: `getAvailableGovernors()`, `getAvailableCpuFrequencies()`
-     - GPU: `getCurrentGpuValue()`, `getAvailableGpuFrequencies()`
-     - GPU: `getCurrentMinGpuPowerLevel()`, `getCurrentMaxGpuPowerLevel()`, `getNumGpuPowerLevels()`
-     - GPU: `setMinGpuPowerLevel(level)`, `setMaxGpuPowerLevel(level)`
-     - Bus: `getCurrentMinBusLevel()`, `getCurrentMaxBusLevel()`, `getNumBusLevels()`
-     - Bus: `setMinBusLevel(level)`, `setMaxBusLevel(level)`
+1. **PerformanceDriver**（抽象基底クラス）
+   - 場所: `drivers/PerformanceDriver.kt`
+   - 端末固有の各パフォーマンスドライバーのインターフェースを定義
+   - 周波数の整形など共通機能を提供
+   - **抽象メソッド**（実装必須）:
+     - `isDriverSupported()` - ドライバーの利用可否の判定
+     - `getDisplayUnit()` - 周波数値の表示単位（HZ または INTEGER）を返す
+   - **デフォルト実装を持つオープンメソッド**（オーバーライド可能）:
+     - `isGovernorSupported()` - CPU ガバナー制御の対応（既定: false）
+     - `isGpuSupported()` - GPU 制御の対応（既定: false）
+     - `isBusSupported()` - RAM バス制御の対応（既定: false）
+     - `isFanSupported()` - ファン制御の対応（既定: false）
+     - `start()` - ゲーム開始時にドライバーを初期化（既定: 何もしない）
+     - `stop()` - ゲーム終了時にドライバーを後始末（既定: 何もしない）
+     - `beginUpdate()` - バッチ更新セッションを開始（既定: 何もしない）
+     - `commit()` - 保留中の更新を確定（既定: true を返す）
+     - `getDefaultProfile()` - その端末の既定の「バランス」プロファイルを返す
+     - CPU: `getCurrentMinCpuValue()`、`getCurrentMaxCpuValue()`、`getCurrentGovernor()`
+     - CPU: `setMinCpuValue(value)`、`setMaxCpuValue(value)`、`setGovernor(governor)`
+     - CPU: `getAvailableGovernors()`、`getAvailableCpuFrequencies()`
+     - GPU: `getCurrentGpuValue()`、`getAvailableGpuFrequencies()`
+     - GPU: `getCurrentMinGpuPowerLevel()`、`getCurrentMaxGpuPowerLevel()`、`getNumGpuPowerLevels()`
+     - GPU: `setMinGpuPowerLevel(level)`、`setMaxGpuPowerLevel(level)`
+     - Bus: `getCurrentMinBusLevel()`、`getCurrentMaxBusLevel()`、`getNumBusLevels()`
+     - Bus: `setMinBusLevel(level)`、`setMaxBusLevel(level)`
 
-2. **PServerDriver** (Implementation)
-   - Location: `drivers/PServerDriver.kt`
-   - Concrete implementation for devices with PServer support
-   - Supports: AYN Odin, Retroid Pocket devices
-   - **Integrated binder interface** - Directly communicates with PServerBinder service
-   - Manages all sysfs paths for CPU and GPU control
-   - Implements fallback to direct file reads when PServer unavailable
-   - Uses Android Binder IPC via reflection to access ServiceManager
-   - GPU support for Adreno GPUs (Qualcomm Snapdragon devices)
-   - **Command optimization**: Concatenates chmod → echo → chmod into single commands for faster execution
-   - **Permission management**: Sets sysfs files to 444 (read-only) after writes, restores to 644 on stop
-   - **Policy-based CPU control** (inspired by [GameMode](https://github.com/FeralInteractive/gamemode)):
-     - Discovers CPU policies by resolving symlinks at initialization
-     - Eliminates redundant writes to CPUs sharing the same policy
-     - Reduces IPC calls by 50-75% on typical multi-core devices
-     - Falls back to per-CPU approach if policy discovery fails
+2. **PServerDriver**（実装）
+   - 場所: `drivers/PServerDriver.kt`
+   - PServer 対応端末向けの具体的な実装
+   - 対応: AYN Odin、Retroid Pocket 端末
+   - **binder インターフェースを内蔵** - PServerBinder サービスと直接通信
+   - CPU と GPU 制御のためのすべての sysfs パスを管理
+   - PServer が使えない場合は直接ファイル読み取りへフォールバック
+   - リフレクション経由の Android Binder IPC で ServiceManager にアクセス
+   - Adreno GPU（Qualcomm Snapdragon 端末）の GPU 対応
+   - **コマンド最適化**: chmod → echo → chmod を 1 つのコマンドに連結して実行を高速化
+   - **権限管理**: 書き込み後に sysfs ファイルを 444（読み取り専用）にし、停止時に 644 へ戻す
+   - **[GameMode](https://github.com/FeralInteractive/gamemode) に着想を得たポリシーベースの CPU 制御**:
+     - 初期化時にシンボリックリンクを解決して CPU ポリシーを検出
+     - 同じポリシーを共有する CPU への冗長な書き込みを排除
+     - 一般的なマルチコア端末で IPC 呼び出しを 50〜75% 削減
+     - ポリシーの検出に失敗した場合は CPU 単位の方式にフォールバック
 
-3. **SamsungPerformanceDriver** (Implementation)
-   - Location: `drivers/SamsungPerformanceDriver.kt`
-   - Concrete implementation using Samsung Performance SDK
-   - Supports: Samsung Galaxy devices running Android 10+ (since March 2020)
-   - Uses performance levels (1-4) instead of raw frequencies (level 0 = disabled)
-   - Communicates with system daemon via socket (requires INTERNET permission)
-   - Supports CPU and GPU performance control through CustomParams API
-   - No CPU governor control (Samsung SDK manages this internally)
-   - **Lifecycle**: `start()` is no-op (controls started by individual setters), `stop()` calls `performanceManager.stop()` to stop all active controls
+3. **SamsungPerformanceDriver**（実装）
+   - 場所: `drivers/SamsungPerformanceDriver.kt`
+   - Samsung Performance SDK を使う具体的な実装
+   - 対応: Android 10 以上（2020 年 3 月以降）の Samsung Galaxy 端末
+   - 生の周波数ではなくパフォーマンスレベル（1〜4）を使用（レベル 0 = 無効）
+   - ソケット経由でシステムデーモンと通信（INTERNET 権限が必要）
+   - CustomParams API による CPU と GPU のパフォーマンス制御に対応
+   - CPU ガバナー制御はなし（Samsung SDK が内部で管理）
+   - **ライフサイクル**: `start()` は何もしない（制御は各 setter が開始する）。`stop()` は
+     `performanceManager.stop()` を呼び、すべての有効な制御を停止する
 
-4. **PowerManager** (Facade)
-   - Location: `PowerManager.kt`
-   - High-level API for UI components
-   - Delegates all operations to the active PerformanceDriver
-   - Provides data classes: `CpuInfo`, `GpuInfo`
-   - Exposes methods for CPU governor, frequency, and GPU control
-   - **Profile Management**: Tracks `currentProfile` and synchronizes it with driver state
-   - **Profile Persistence**: Saves/restores profiles via `PrefManager` using JSON serialization
-   - **Automatic Sync**: All setter methods update both driver and `currentProfile` data
-   - **Auto-Tuning Management**:
-     - Tracks target FPS (from XServer frame rate limiter)
-     - Tracks current FPS, CPU usage, GPU usage (from Performance HUD)
-     - Manages `PerformanceAutoTuner` lifecycle (start/stop)
-     - Provides callbacks for auto-tuner to adjust CPU/GPU settings
-   - Maintains backward compatibility with existing UI code
+4. **PowerManager**（ファサード）
+   - 場所: `PowerManager.kt`
+   - UI コンポーネント向けの高水準 API
+   - すべての操作を有効な PerformanceDriver に委譲
+   - データクラスを提供: `CpuInfo`、`GpuInfo`
+   - CPU ガバナー、周波数、GPU 制御のメソッドを公開
+   - **プロファイル管理**: `currentProfile` を保持し、ドライバーの状態と同期
+   - **プロファイルの永続化**: JSON シリアライズで `PrefManager` 経由で保存／復元
+   - **自動同期**: すべての setter がドライバーと `currentProfile` の両方を更新
+   - **自動チューニングの管理**:
+     - 目標 FPS（XServer のフレームレートリミッター由来）を保持
+     - 現在の FPS、CPU 使用率、GPU 使用率（Performance HUD 由来）を保持
+     - `PerformanceAutoTuner` のライフサイクル（開始／停止）を管理
+     - 自動チューナーが CPU／GPU 設定を調整するためのコールバックを提供
+   - 既存の UI コードとの後方互換性を維持
 
-5. **PowerProfile** (Data Class)
-   - Location: `PowerProfile.kt`
-   - Serializable data class representing a complete performance configuration
-   - Fields (all mutable `var`):
-     - `enableAutoTuning: Boolean` - Enable automatic performance tuning (default: false)
-     - `name: String` - Profile name (e.g., "Balanced", "Performance", "Custom")
-     - `governor: CpuGovernor` - CPU governor enum
-     - `minCpuFreq: Long` - Minimum CPU frequency/level
-     - `maxCpuFreq: Long` - Maximum CPU frequency/level
-     - `minGpuPowerLevel: Int` - Minimum GPU power level (default: 0)
-     - `maxGpuPowerLevel: Int` - Maximum GPU power level (default: 0)
-   - Used for profile persistence, UI state, and default profiles
+5. **PowerProfile**（データクラス）
+   - 場所: `PowerProfile.kt`
+   - パフォーマンス設定の一式を表すシリアライズ可能なデータクラス
+   - フィールド（すべて可変の `var`）:
+     - `enableAutoTuning: Boolean` - 自動パフォーマンスチューニングを有効化（既定: false）
+     - `name: String` - プロファイル名（例: 「Balanced」「Performance」「Custom」）
+     - `governor: CpuGovernor` - CPU ガバナーの enum
+     - `minCpuFreq: Long` - 最小 CPU 周波数／レベル
+     - `maxCpuFreq: Long` - 最大 CPU 周波数／レベル
+     - `minGpuPowerLevel: Int` - 最小 GPU パワーレベル（既定: 0）
+     - `maxGpuPowerLevel: Int` - 最大 GPU パワーレベル（既定: 0）
+   - プロファイルの永続化、UI 状態、既定プロファイルに使用
 
-6. **PowerProfiles** (Object)
-   - Location: `PowerProfile.kt`
-   - Provides `getDefaultProfiles()` factory method
-   - Generates device-specific preset profiles:
-     - **Power Save**: Low frequencies (25% CPU, 25% GPU), powersave governor
-     - **Balanced**: Mid frequencies (50% CPU, 50-100% GPU), schedutil/conservative/interactive governor
-     - **Performance**: High frequencies (75% CPU, 75-100% GPU), performance governor
-     - **On Demand**: Full range (0-100% CPU/GPU), ondemand governor
-     - **WALT**: Full range (0-100% CPU/GPU), walt governor
-   - Dynamically calculates frequency tiers based on available frequencies
-   - GPU power levels calculated as percentages of max GPU power level
+6. **PowerProfiles**（オブジェクト）
+   - 場所: `PowerProfile.kt`
+   - `getDefaultProfiles()` ファクトリメソッドを提供
+   - 端末固有のプリセットプロファイルを生成:
+     - **Power Save**: 低周波数（CPU 25%、GPU 25%）、powersave ガバナー
+     - **Balanced**: 中間周波数（CPU 50%、GPU 50〜100%）、schedutil／conservative／interactive ガバナー
+     - **Performance**: 高周波数（CPU 75%、GPU 75〜100%）、performance ガバナー
+     - **On Demand**: 全範囲（CPU／GPU 0〜100%）、ondemand ガバナー
+     - **WALT**: 全範囲（CPU／GPU 0〜100%）、walt ガバナー
+   - 利用可能な周波数から周波数の段階を動的に計算
+   - GPU パワーレベルは最大 GPU パワーレベルの割合として計算
 
-7. **PerformanceAutoTuner** (Auto-Tuning)
-   - Location: `autotuning/PerformanceAutoTuner.kt`
-   - Automatic performance tuner using PID controllers
-   - Dynamically adjusts CPU frequencies, GPU power levels and, when supported, RAM bus level based on target/current FPS; CPU/GPU utilization also informs CPU/GPU adjustments:
-     - Target FPS (from XServer frame rate limiter)
-     - Current FPS (from Performance HUD)
-     - CPU usage percentage
-     - GPU usage percentage
-   - **Adaptive Performance Scaling**:
-     - Reduces performance when hitting target FPS with low utilization
-     - Increases performance when missing target FPS or high utilization
-     - Uses PID controllers for smooth, responsive adjustments
-   - **Configurable Thresholds**:
-     - FPS error threshold: 2.0 FPS (small), 5.0 FPS (large)
-     - Usage low threshold: 70% (reduce performance)
-     - Usage high threshold: 85% (increase performance)
-     - Performance range: 20-100%
-   - **Tuning Cycle**: Runs every 2 seconds on background thread
-   - **Integration**: Enabled via `PowerProfile.enableAutoTuning` flag
+7. **PerformanceAutoTuner**（自動チューニング）
+   - 場所: `autotuning/PerformanceAutoTuner.kt`
+   - PID コントローラーを使う自動パフォーマンスチューナー
+   - 目標／現在の FPS に基づいて CPU 周波数、GPU パワーレベル、対応していれば RAM バスレベルを
+     動的に調整します。CPU／GPU の使用率も CPU／GPU の調整に反映されます:
+     - 目標 FPS（XServer のフレームレートリミッター由来）
+     - 現在の FPS（Performance HUD 由来）
+     - CPU 使用率（%）
+     - GPU 使用率（%）
+   - **適応的なパフォーマンススケーリング**:
+     - 目標 FPS を達成していて使用率が低い場合は性能を下げる
+     - 目標 FPS に届かない、または使用率が高い場合は性能を上げる
+     - PID コントローラーで滑らかかつ応答性の高い調整を行う
+   - **設定可能なしきい値**:
+     - FPS 誤差のしきい値: 2.0 FPS（小）、5.0 FPS（大）
+     - 使用率の下限しきい値: 70%（性能を下げる）
+     - 使用率の上限しきい値: 85%（性能を上げる）
+     - パフォーマンス範囲: 20〜100%
+   - **チューニング周期**: バックグラウンドスレッドで 2 秒ごとに実行
+   - **統合**: `PowerProfile.enableAutoTuning` フラグで有効化
 
-8. **PidController** (Control Theory)
-   - Location: `autotuning/PidController.kt`
-   - Proportional-Integral-Derivative controller for smooth performance adjustments
-   - **Tuning Parameters**:
-     - Kp (Proportional gain): 0.5 - Immediate response to FPS error
-     - Ki (Integral gain): 0.2 - Eliminates steady-state error over time
-     - Kd (Derivative gain): 0.1 - Dampens oscillations for stability
-   - **Anti-Windup Protection**: Integral term limited to ±50.0
-   - **Output Clamping**: Constrains output to valid range (-100.0 to +100.0)
-   - **State Management**: Tracks integral, previous error, and time delta
-   - Separate controllers for CPU and GPU tuning
+8. **PidController**（制御理論）
+   - 場所: `autotuning/PidController.kt`
+   - 滑らかなパフォーマンス調整のための比例・積分・微分（PID）コントローラー
+   - **チューニングパラメータ**:
+     - Kp（比例ゲイン）: 0.5 - FPS 誤差への即時応答
+     - Ki（積分ゲイン）: 0.2 - 時間経過とともに定常偏差を解消
+     - Kd（微分ゲイン）: 0.1 - 振動を抑えて安定させる
+   - **ワインドアップ防止**: 積分項を ±50.0 に制限
+   - **出力のクランプ**: 出力を有効範囲（-100.0〜+100.0）に制限
+   - **状態管理**: 積分値、前回の誤差、時間差を保持
+   - CPU 用と GPU 用に別々のコントローラーを持つ
 
-## Supported Features
+## 対応機能
 
-### Current (PServerDriver)
+### 現状（PServerDriver）
 
-**CPU Control:**
-- ✅ CPU governor control
-- ✅ CPU frequency scaling (min/max)
-- ✅ Multiple governor support (schedutil, performance, powersave, etc.)
-- ✅ Sysfs file permission management (chmod 444 after write, restore to 644 on stop)
-- ✅ **CPU Pinning / Process Affinity Control**:
-  - ~~Automatic app process pinning to efficiency cores~~ (Removed due to possible ANR happening)
-  - Automatic PulseAudio pinning to dedicated performance core
-  - Wine game process pinning with retry logic
-  - Wine infrastructure pinning (wineserver, winhandler, services.exe)
-  - Cluster-based core selection (EFFICIENCY, PERFORMANCE, PRIME)
-  - Wine-aware PID discovery via `/proc/cmdline` scanning
+**CPU 制御:**
+- ✅ CPU ガバナー制御
+- ✅ CPU 周波数スケーリング（最小／最大）
+- ✅ 複数ガバナーの対応（schedutil、performance、powersave など）
+- ✅ sysfs ファイルの権限管理（書き込み後 chmod 444、停止時に 644 へ復元）
+- ✅ **CPU ピニング／プロセスアフィニティ制御**:
+  - ~~アプリプロセスの高効率コアへの自動ピニング~~（ANR が発生する可能性があるため削除）
+  - PulseAudio を専用のパフォーマンスコアへ自動ピニング
+  - Wine ゲームプロセスの再試行ロジック付きピニング
+  - Wine のインフラ（wineserver、winhandler、services.exe）のピニング
+  - クラスタベースのコア選択（EFFICIENCY、PERFORMANCE、PRIME）
+  - `/proc/cmdline` の走査による Wine 対応の PID 検出
 
-**GPU Control (Adreno):**
-- ✅ GPU power level control (min/max power levels)
-- ✅ Power level range detection (`num_pwrlevels`)
-- ✅ Available GPU frequencies enumeration (read-only)
-- ✅ Current GPU frequency monitoring (read-only)
-- ✅ Sysfs file permission management (chmod 444 after write, restore to 644 on stop)
-- ❌ Direct GPU frequency setting (not supported by hardware)
+**GPU 制御（Adreno）:**
+- ✅ GPU パワーレベル制御（最小／最大パワーレベル）
+- ✅ パワーレベル範囲の検出（`num_pwrlevels`）
+- ✅ 利用可能な GPU 周波数の列挙（読み取り専用）
+- ✅ 現在の GPU 周波数の監視（読み取り専用）
+- ✅ sysfs ファイルの権限管理（書き込み後 chmod 444、停止時に 644 へ復元）
+- ❌ GPU 周波数の直接設定（ハードウェア非対応）
 
-**Auto-Tuning:**
-- ✅ PID controller-based automatic performance tuning
-- ✅ Dynamic CPU frequency adjustment based on FPS and CPU usage
-- ✅ Dynamic GPU power level adjustment based on FPS and GPU usage
-- ✅ Adaptive performance scaling (reduce when over-performing, increase when under-performing)
-- ✅ Configurable thresholds for FPS error and resource utilization
-- ✅ Background tuning thread with 2-second cycle interval
-- ✅ Integration with XServer frame rate limiter for target FPS
-- ✅ Integration with Performance HUD for current metrics (FPS, CPU/GPU usage)
-- ✅ Separate PID controllers for CPU and GPU with anti-windup protection
+**自動チューニング:**
+- ✅ PID コントローラーによる自動パフォーマンスチューニング
+- ✅ FPS と CPU 使用率に基づく CPU 周波数の動的調整
+- ✅ FPS と GPU 使用率に基づく GPU パワーレベルの動的調整
+- ✅ 適応的なパフォーマンススケーリング（過剰なら下げ、不足なら上げる）
+- ✅ FPS 誤差とリソース使用率のしきい値を設定可能
+- ✅ 2 秒周期のバックグラウンドチューニングスレッド
+- ✅ 目標 FPS のための XServer フレームレートリミッターとの統合
+- ✅ 現在の指標（FPS、CPU／GPU 使用率）のための Performance HUD との統合
+- ✅ ワインドアップ防止付きの CPU 用／GPU 用の独立した PID コントローラー
 
-**Lifecycle:**
-- ✅ `start(containerDir)` - Restores saved profile from container-specific file (or applies default Balanced profile)
-  - **Automatically pins app process to efficiency cores**
-  - **Automatically pins PulseAudio to first performance core**
-  - **Starts auto-tuning if enabled in profile**
-- ✅ `stop()` - **Critical performance restoration**:
-  1. **Stops auto-tuning thread and resets PID controllers**
-  2. Resets CPU frequencies to full range (min to max available)
-  3. Resets GPU power levels to full range (0 to max)
-  4. Restores CPU governor to first available governor
-  5. Restores all modified sysfs files to 644 permissions
-  6. **Resets app process CPU affinity to all cores**
-  - Runs asynchronously on background thread
-  - **Prevents device slowness** when exiting from Power Save mode
+**ライフサイクル:**
+- ✅ `start(containerDir)` - コンテナ固有ファイルから保存済みプロファイルを復元（無ければ既定の
+  「バランス」プロファイルを適用）
+  - **アプリプロセスを高効率コアへ自動ピニング**
+  - **PulseAudio を最初のパフォーマンスコアへ自動ピニング**
+  - **プロファイルで有効なら自動チューニングを開始**
+- ✅ `stop()` - **重要な性能の復元処理**:
+  1. **自動チューニングスレッドを停止し、PID コントローラーをリセット**
+  2. CPU 周波数を全範囲（最小〜利用可能な最大）へ戻す
+  3. GPU パワーレベルを全範囲（0〜最大）へ戻す
+  4. CPU ガバナーを最初に利用可能なガバナーへ戻す
+  5. 変更したすべての sysfs ファイルを 644 権限へ戻す
+  6. **アプリプロセスの CPU アフィニティを全コアへ戻す**
+  - バックグラウンドスレッドで非同期に実行
+  - **Power Save モードから抜ける際の端末の重さを防ぐ**
 
-### CPU Pinning (Process Affinity Control)
+### CPU ピニング（プロセスアフィニティ制御）
 
-**Overview:**
-CPU pinning assigns specific processes to dedicated CPU cores to optimize performance by:
-- Reducing thread migration overhead (50-75% reduction)
-- Improving cache locality (fewer cache invalidations)
-- Preventing interference between critical processes
-- Ensuring prime cores boost to maximum frequency
+**概要:**
+CPU ピニングは特定のプロセスを専用の CPU コアに割り当て、次の点で性能を最適化します:
+- スレッドマイグレーションのオーバーヘッドを削減（50〜75% 削減）
+- キャッシュの局所性を改善（キャッシュ無効化の減少）
+- 重要なプロセス間の干渉を防止
+- prime コアを最大周波数までブーストさせる
 
-**Automatic Pinning (Driver-Level):**
+**自動ピニング（ドライバーレベル）:**
 
-The PServerDriver automatically handles CPU pinning when started/stopped:
+PServerDriver は開始／停止時に CPU ピニングを自動で行います:
 
-*On `start()`:*
-- **App Process** → Pinned to EFFICIENCY cores (CPUs 0-2 on typical devices)
-  - Frees up performance cores for game processes
-  - UI/overlay doesn't need high-frequency cores
-  - Reduces power consumption
-- **PulseAudio** → Pinned to first PERFORMANCE core (CPU 3 on typical devices)
-  - Dedicated core for low-latency audio
-  - Prevents audio crackling/underruns
-  - No cache contention with game
+*`start()` 時:*
+- **アプリプロセス** → EFFICIENCY コアへピニング（一般的な端末では CPU 0〜2）
+  - ゲーム用プロセスにパフォーマンスコアを空ける
+  - UI／オーバーレイに高周波コアは不要
+  - 消費電力を削減
+- **PulseAudio** → 最初の PERFORMANCE コアへピニング（一般的な端末では CPU 3）
+  - 低遅延オーディオ用の専用コア
+  - 音切れ／アンダーランを防止
+  - ゲームとのキャッシュ競合なし
 
-*On `stop()`:*
-- **App Process** → Reset to all available cores
-  - Restores default Android scheduler behavior
-  - Ensures UI responsiveness when not gaming
+*`stop()` 時:*
+- **アプリプロセス** → 利用可能なすべてのコアへ戻す
+  - Android スケジューラーの既定動作に戻す
+  - ゲーム以外のときの UI 応答性を確保
 
-**Manual Pinning (Game & Wine Infrastructure):**
+**手動ピニング（ゲームと Wine インフラ）:**
 
-Game processes and Wine infrastructure are pinned via PowerManager methods:
+ゲームプロセスと Wine インフラは PowerManager のメソッドでピニングします:
 
-*Game Process Pinning:*
+*ゲームプロセスのピニング:*
 ```kotlin
 PowerManager.pinGameWithRetry(
     processName = "DaveTheDiver.exe",
@@ -225,24 +234,24 @@ PowerManager.pinGameWithRetry(
     retryDelayMs = 1000
 )
 ```
-- Uses Wine-aware PID discovery (scans `/proc/cmdline` for `.exe` processes)
-- Retries up to 10 times with 1 second delay
-- Pins to PERFORMANCE + PRIME cores (CPUs 3-7 on typical devices)
-- Logs success/failure with attempt count
+- Wine 対応の PID 検出を使用（`.exe` プロセスを `/proc/cmdline` から探す）
+- 最大 10 回、1 秒間隔で再試行
+- PERFORMANCE + PRIME コアへピニング（一般的な端末では CPU 3〜7）
+- 成功／失敗を試行回数とともにログ出力
 
-*Wine Infrastructure Pinning:*
+*Wine インフラのピニング:*
 ```kotlin
 PowerManager.pinWineInfrastructure()
 ```
-- **wineserver** → PERFORMANCE cores (CPUs 3-6) - Critical for Wine IPC
-- **winhandler.exe** → PERFORMANCE + PRIME cores (CPUs 4-7) - Window management
-- **services.exe** → First 2 PERFORMANCE cores (CPUs 3-4) - Windows services
-- Waits 2 seconds for Wine to fully initialize
-- Logs each process pinning result
+- **wineserver** → PERFORMANCE コア（CPU 3〜6）- Wine の IPC に重要
+- **winhandler.exe** → PERFORMANCE + PRIME コア（CPU 4〜7）- ウィンドウ管理
+- **services.exe** → 最初の 2 つの PERFORMANCE コア（CPU 3〜4）- Windows サービス
+- Wine の初期化完了を 2 秒待つ
+- 各プロセスのピニング結果をログ出力
 
-**Cluster-Based Core Selection:**
+**クラスタベースのコア選択:**
 
-PServerDriver uses cluster-based core selection for device-agnostic pinning:
+PServerDriver は端末に依存しないピニングのためにクラスタベースのコア選択を使います:
 
 ```kotlin
 // Get cores by cluster type
@@ -254,12 +263,12 @@ val primeCores = driver.getCpuCoresByCluster(CpuCluster.PRIME)       // CPU 7
 driver.setCpuAffinityByCores(pid, perfCores)
 ```
 
-**CPU Cluster Types:**
-- `EFFICIENCY` - Lowest frequency cores (power-saving)
-- `PERFORMANCE` - Mid-high frequency cores (balanced)
-- `PRIME` - Highest frequency core(s) (peak performance)
+**CPU クラスタの種類:**
+- `EFFICIENCY` - 最低周波数のコア（省電力）
+- `PERFORMANCE` - 中〜高周波数のコア（バランス）
+- `PRIME` - 最高周波数のコア（最高性能）
 
-**Complete CPU Allocation (Snapdragon 8 Gen 2 Example):**
+**CPU 割り当ての全体像（Snapdragon 8 Gen 2 の例）:**
 
 ```
 CPU 0-2 (Efficiency @ 2.0 GHz):  GameNative app, Android system
@@ -268,33 +277,33 @@ CPU 4-6 (Performance @ 2.8 GHz): wineserver, services.exe, game, winhandler
 CPU 7 (Prime @ 3.2 GHz):         game, winhandler (BOOST!)
 ```
 
-**Performance Impact:**
+**性能への影響:**
 
-*Before Pinning:*
-- FPS: 40-45 (unstable)
-- Prime core frequency: 2.476 GHz (underutilized)
-- Frame pacing: Inconsistent (stutters)
-- Audio: Occasional crackling
+*ピニング前:*
+- FPS: 40〜45（不安定）
+- prime コアの周波数: 2.476 GHz（使い切れていない）
+- フレームペーシング: 不安定（カクつき）
+- 音声: 時々ノイズ
 
-*After Pinning:*
-- FPS: 58-60 (stable)
-- Prime core frequency: 3.0-3.2 GHz (boosted)
-- Frame pacing: Smooth, consistent
-- Audio: Crystal clear, no glitches
-- Cache efficiency: Improved (no contention)
+*ピニング後:*
+- FPS: 58〜60（安定）
+- prime コアの周波数: 3.0〜3.2 GHz（ブースト）
+- フレームペーシング: 滑らかで安定
+- 音声: クリアでノイズなし
+- キャッシュ効率: 改善（競合なし）
 
-**Wine-Aware PID Discovery:**
+**Wine 対応の PID 検出:**
 
-For Wine games, standard `pidof` doesn't work because:
-- Wine processes appear as Linux processes with Wine executable names
-- The actual game executable is in `/proc/<pid>/cmdline`
+Wine ゲームでは通常の `pidof` が使えません。理由は:
+- Wine のプロセスは Wine の実行ファイル名を持つ Linux プロセスとして見える
+- 実際のゲームの実行ファイルは `/proc/<pid>/cmdline` にある
 
-PServerDriver provides `findWineProcessPid()` to scan `/proc`:
+PServerDriver は `/proc` を走査する `findWineProcessPid()` を提供します:
 ```kotlin
 driver.findWineProcessPid("DaveTheDiver.exe")  // Returns PID or null
 ```
 
-**Integration Example:**
+**統合例:**
 
 ```kotlin
 // In XServerScreen.kt after game environment setup
@@ -318,7 +327,7 @@ val executableName = container.executablePath
 PowerManager.pinWineInfrastructure()
 ```
 
-**Expected Logs:**
+**想定されるログ:**
 ```
 PServerDriver: Pinned app process (PID: 12345) to efficiency CPUs 0, 1, 2
 PowerManager: Pinned PulseAudio (PID: 10642) to CPU 3
@@ -328,7 +337,7 @@ PowerManager: Pinned winhandler.exe (PID: 11536) to CPUs 3, 4, 5, 6, 7
 PowerManager: Pinned services.exe (PID: 11342) to CPUs 3, 4
 ```
 
-**Manual Testing (ADB):**
+**手動テスト（ADB）:**
 ```bash
 # Get game PID
 adb shell ps -A | grep -i dave
@@ -340,31 +349,34 @@ adb shell su -c "taskset -p 0xf0 <pid>"
 adb shell su -c "taskset -p <pid>"
 ```
 
-### GameMode-Inspired Improvements
+### GameMode に着想を得た改善
 
-**Overview:**
-PServerDriver incorporates optimizations inspired by [Feral Interactive's GameMode](https://github.com/FeralInteractive/gamemode), a Linux daemon for optimizing system performance on demand. These improvements reduce IPC overhead by **50-75%** on typical multi-core devices.
+**概要:**
+PServerDriver には、オンデマンドでシステム性能を最適化する Linux デーモン
+[Feral Interactive の GameMode](https://github.com/FeralInteractive/gamemode) に着想を得た最適化が
+取り込まれています。これらの改善により、一般的なマルチコア端末で IPC のオーバーヘッドが
+**50〜75%** 削減されます。
 
-**Policy-Based CPU Control:**
+**ポリシーベースの CPU 制御:**
 
-*Discovery Phase (at driver start):*
-- Resolves symlinks for each CPU's `scaling_governor` file using `File.canonicalPath`
-- Groups CPUs by their actual policy directory (e.g., `/sys/devices/system/cpu/cpufreq/policy0`)
-- Creates a `CpuPolicy` object for each unique policy containing all associated CPU cores
-- Cached for subsequent operations (only discovered once per driver lifecycle)
+*検出フェーズ（ドライバー開始時）:*
+- `File.canonicalPath` を使って各 CPU の `scaling_governor` ファイルのシンボリックリンクを解決
+- 実際のポリシーディレクトリ（例: `/sys/devices/system/cpu/cpufreq/policy0`）ごとに CPU をグループ化
+- 一意なポリシーごとに関連する CPU コアをすべて含む `CpuPolicy` オブジェクトを作成
+- 以降の操作のためにキャッシュ（ドライバーのライフサイクル中に 1 度だけ検出）
 
-*Benefits:*
-- **50-75% reduction in IPC calls** on devices with shared policies (typical for modern SoCs)
-- Example: 8-core device with single policy → 3 IPC calls instead of 24 (87.5% reduction)
-- Eliminates redundant writes to CPUs sharing the same cpufreq policy
-- More robust against race conditions from concurrent policy modifications
+*利点:*
+- ポリシーを共有する端末（最近の SoC では一般的）で **IPC 呼び出しが 50〜75% 削減**
+- 例: 単一ポリシーの 8 コア端末 → 24 回ではなく 3 回の IPC 呼び出し（87.5% 削減）
+- 同じ cpufreq ポリシーを共有する CPU への冗長な書き込みを排除
+- ポリシーの同時変更による競合状態に対してより堅牢
 
-*Fallback Behavior:*
-- If policy discovery fails, falls back to per-CPU approach (legacy behavior)
-- Ensures compatibility with all device configurations
-- Logs detailed information about discovered policies for debugging
+*フォールバックの挙動:*
+- ポリシーの検出に失敗した場合は CPU 単位の方式（従来の挙動）にフォールバック
+- あらゆる端末構成との互換性を確保
+- デバッグ用に検出したポリシーの詳細をログ出力
 
-**CPU Policy Data Structure:**
+**CPU ポリシーのデータ構造:**
 
 ```kotlin
 private data class CpuPolicy(
@@ -377,24 +389,24 @@ private data class CpuPolicy(
 )
 ```
 
-**Sysfs Validation:**
+**sysfs の検証:**
 
-The driver validates CPU frequency scaling support at initialization:
+ドライバーは初期化時に CPU 周波数スケーリングの対応を検証します:
 
-*Validates:*
-- `/sys/devices/system/cpu` - CPU base directory
-- `/sys/devices/system/cpu/cpufreq` - CPUFreq directory
-- `/sys/devices/system/cpu/cpufreq/policy0` - Policy0 directory
-- `/sys/devices/system/cpu/cpufreq/policy0/scaling_governor` - Governor file
+*検証対象:*
+- `/sys/devices/system/cpu` - CPU のベースディレクトリ
+- `/sys/devices/system/cpu/cpufreq` - CPUFreq ディレクトリ
+- `/sys/devices/system/cpu/cpufreq/policy0` - policy0 ディレクトリ
+- `/sys/devices/system/cpu/cpufreq/policy0/scaling_governor` - ガバナーファイル
 
-*Benefits:*
-- Early detection of missing cpufreq support
-- Helpful error messages for troubleshooting
-- Prevents confusing errors later in execution
+*利点:*
+- cpufreq 非対応の早期検出
+- トラブルシューティングに役立つエラーメッセージ
+- 実行中の分かりにくいエラーを防止
 
-**CPU Cluster Identification:**
+**CPU クラスタの識別:**
 
-The driver automatically identifies CPU clusters based on frequency capabilities:
+ドライバーは周波数の能力に基づいて CPU クラスタを自動的に識別します:
 
 ```kotlin
 enum class CpuCluster {
@@ -404,15 +416,15 @@ enum class CpuCluster {
 }
 ```
 
-*Discovery Process:*
-- Sorts policies by maximum frequency
-- Assigns cluster types based on policy count and frequency ranges
-- Supports dual-cluster (big.LITTLE) and tri-cluster (efficiency + performance + prime) configurations
-- Provides cluster-to-core mapping for CPU pinning
+*検出の流れ:*
+- ポリシーを最大周波数でソート
+- ポリシー数と周波数帯に基づいてクラスタ種別を割り当て
+- デュアルクラスタ（big.LITTLE）とトリクラスタ（efficiency + performance + prime）の構成に対応
+- CPU ピニングのためのクラスタ→コアの対応を提供
 
-**Frequency Capping per Policy:**
+**ポリシーごとの周波数上限:**
 
-When setting CPU frequencies, the driver respects each policy's maximum frequency:
+CPU 周波数を設定するとき、ドライバーは各ポリシーの最大周波数を尊重します:
 
 ```kotlin
 // In setMinCpuValue() and setMaxCpuValue()
@@ -420,14 +432,14 @@ val cappedValue = min(value, policy.maxFrequency)
 writeSysfsFile(policy.minFreqPath, cappedValue.toString())
 ```
 
-*Benefits:*
-- Prevents attempting to set impossible frequencies
-- Ensures each core operates within its hardware capabilities
-- Logs capping operations for debugging
+*利点:*
+- 設定不可能な周波数を設定しようとしない
+- 各コアがハードウェアの能力の範囲内で動作することを保証
+- デバッグ用に上限適用の操作をログ出力
 
-**Internal State Tracking:**
+**内部状態の追跡:**
 
-The driver tracks the last requested values instead of reading from sysfs:
+ドライバーは sysfs から読むのではなく、最後に要求した値を保持します:
 
 ```kotlin
 private var currentMinCpuFreq: Long = 0L
@@ -435,14 +447,14 @@ private var currentMaxCpuFreq: Long = 0L
 private var currentGovernor: String = ""
 ```
 
-*Benefits:*
-- `getCurrentMinCpuValue()`, `getCurrentMaxCpuValue()`, `getCurrentGovernor()` return intended values
-- Consistent with what was actually requested
-- Avoids confusion when policies have different values
+*利点:*
+- `getCurrentMinCpuValue()`、`getCurrentMaxCpuValue()`、`getCurrentGovernor()` が意図した値を返す
+- 実際に要求した内容と一貫する
+- ポリシーごとに値が異なる場合の混乱を回避
 
-**Comprehensive Frequency Discovery:**
+**網羅的な周波数の検出:**
 
-`getAvailableCpuFrequencies()` now collects frequencies from all CPU policies:
+`getAvailableCpuFrequencies()` はすべての CPU ポリシーから周波数を集めるようになりました:
 
 ```kotlin
 for (policy in cpuPolicies) {
@@ -451,180 +463,184 @@ for (policy in cpuPolicies) {
 }
 ```
 
-*Benefits:*
-- Includes frequencies from all CPU clusters
-- Provides complete frequency range for UI
-- Accurate frequency selection for profiles
+*利点:*
+- すべての CPU クラスタの周波数を含む
+- UI に完全な周波数範囲を提供
+- プロファイルの周波数選択が正確になる
 
-### Current (SamsungPerformanceDriver)
+### 現状（SamsungPerformanceDriver）
 
-**CPU Control:**
-- ✅ CPU performance level control (1-4 scale, 0 = disabled)
-- ✅ Min/Max CPU performance levels
-- ✅ Automatic timeout management (0 = indefinite)
-- ❌ CPU governor control (managed by Samsung SDK)
-- ❌ Raw frequency control (uses performance levels)
+**CPU 制御:**
+- ✅ CPU パフォーマンスレベルの制御（1〜4 のスケール、0 = 無効）
+- ✅ CPU パフォーマンスレベルの最小／最大
+- ✅ タイムアウトの自動管理（0 = 無限）
+- ❌ CPU ガバナー制御（Samsung SDK が管理）
+- ❌ 生の周波数制御（パフォーマンスレベルを使用）
 
-**GPU Control:**
-- ✅ GPU performance level control (1-4 scale, 0 = disabled)
-- ✅ Min/Max GPU performance levels
-- ✅ Automatic resource management
-- ❌ Direct GPU frequency setting (not supported)
+**GPU 制御:**
+- ✅ GPU パフォーマンスレベルの制御（1〜4 のスケール、0 = 無効）
+- ✅ GPU パフォーマンスレベルの最小／最大
+- ✅ リソースの自動管理
+- ❌ GPU 周波数の直接設定（非対応）
 
-**Lifecycle:**
-- ✅ `start(containerDir)` - Restores saved profile from container-specific file (or applies default Balanced profile)
-- ✅ `stop()` - Calls `performanceManager.stop()` to stop all active performance controls. PowerManager saves the current profile before calling this method.
+**ライフサイクル:**
+- ✅ `start(containerDir)` - コンテナ固有ファイルから保存済みプロファイルを復元（無ければ既定の
+  「バランス」プロファイルを適用）
+- ✅ `stop()` - `performanceManager.stop()` を呼び、すべての有効なパフォーマンス制御を停止する。
+  PowerManager はこのメソッドを呼ぶ前に現在のプロファイルを保存する。
 
-### Future Candidates
-- ⏳ Fan speed control
-- ⏳ Additional device-specific drivers
-- ⏳ Mali GPU support (non-Samsung)
+### 今後の候補
+- ⏳ ファン回転数の制御
+- ⏳ 端末固有ドライバーの追加
+- ⏳ Mali GPU の対応（Samsung 以外）
 
-## Key Design Decisions
+## 主要な設計判断
 
-### Generic Abstraction
-- **Parameter naming**: Methods use generic `value: Long` instead of `frequency: Long`
-- **Generic comments**: Base class uses "CPU performance value" instead of "frequency in KHz"
-- **Implementation-specific docs**: PServerDriver specifies "frequency in KHz" in its documentation
-- This allows future drivers to use different units (percentages, performance levels, etc.)
+### 汎用的な抽象化
+- **引数の命名**: メソッドは `frequency: Long` ではなく汎用的な `value: Long` を使う
+- **汎用的なコメント**: 基底クラスでは「KHz 単位の周波数」ではなく「CPU パフォーマンス値」と書く
+- **実装固有のドキュメント**: PServerDriver は自身のドキュメントで「KHz 単位の周波数」と明記する
+- これにより将来のドライバーが異なる単位（百分率、パフォーマンスレベルなど）を使える
 
-### Display Units
+### 表示単位
 
-The `PerformanceDriver.DisplayUnit` enum defines how frequency values are displayed:
-- `HZ`: Raw hertz values (e.g., 2400000000 Hz)
-- `INTEGER`: Human-readable format (e.g., 2.4 GHz)
+`PerformanceDriver.DisplayUnit` enum は周波数値の表示方法を定義します:
+- `HZ`: 生のヘルツ値（例: 2400000000 Hz）
+- `INTEGER`: 人間が読みやすい形式（例: 2.4 GHz）
 
-Currently:
-- PServerDriver uses `INTEGER` format
-- SamsungPerformanceDriver uses `INTEGER` format (for performance levels)
+現状:
+- PServerDriver は `INTEGER` 形式を使用
+- SamsungPerformanceDriver は `INTEGER` 形式を使用（パフォーマンスレベル用）
 
-### GPU Power Level Semantics
+### GPU パワーレベルの意味
 
-All drivers expose a **normalized power level interface** where **higher = better performance**.
+すべてのドライバーは、**値が大きいほど高性能**という**正規化されたパワーレベル
+インターフェース**を公開します。
 
-**Unified API Semantics (All Drivers):**
-- Level 0 = Minimum performance
-- Level N = Maximum performance
-- Higher power level = Better performance
-- This applies to both `getCurrentMinGpuPowerLevel()` and `getCurrentMaxGpuPowerLevel()`
+**統一された API の意味（すべてのドライバー）:**
+- レベル 0 = 最低性能
+- レベル N = 最高性能
+- パワーレベルが高いほど高性能
+- これは `getCurrentMinGpuPowerLevel()` と `getCurrentMaxGpuPowerLevel()` の両方に当てはまる
 
-**Driver-Specific Internal Handling:**
+**ドライバー固有の内部処理:**
 
-*PServerDriver (Adreno GPUs):*
-- Adreno sysfs uses reversed indexing: `max_pwrlevel = 0` (fastest), higher index = slower
-- PServerDriver **internally converts** between UI semantics and sysfs semantics
-- Conversion: `sysfs_level = numGpuPowerLevels - 1 - ui_level`
-- UI code doesn't need to know about this reversal
+*PServerDriver（Adreno GPU）:*
+- Adreno の sysfs は逆順のインデックスを使う: `max_pwrlevel = 0`（最速）、インデックスが大きいほど低速
+- PServerDriver は UI の意味と sysfs の意味を**内部的に変換**する
+- 変換: `sysfs_level = numGpuPowerLevels - 1 - ui_level`
+- UI 側のコードはこの逆転を意識する必要がない
 
 *SamsungPerformanceDriver:*
-- Samsung SDK uses natural ordering: Level 1-4 where higher = better
-- No conversion needed, passes values directly
+- Samsung SDK は自然な順序を使う: レベル 1〜4 で大きいほど高性能
+- 変換は不要で、値をそのまま渡す
 
-**GPU Power Level Controls:**
-- `setMinGpuPowerLevel(level)` - Sets minimum performance cap via `min_pwrlevel`
-- `setMaxGpuPowerLevel(level)` - Sets maximum performance cap via `max_pwrlevel`
-- GPU frequency is read-only and managed by the GPU governor within the power level constraints
+**GPU パワーレベルの制御:**
+- `setMinGpuPowerLevel(level)` - `min_pwrlevel` 経由で性能の下限を設定
+- `setMaxGpuPowerLevel(level)` - `max_pwrlevel` 経由で性能の上限を設定
+- GPU 周波数は読み取り専用で、パワーレベルの制約内で GPU ガバナーが管理する
 
-### Profile Persistence
+### プロファイルの永続化
 
-PowerManager automatically saves and restores performance profiles across app sessions:
+PowerManager はアプリのセッションをまたいでパフォーマンスプロファイルを自動で保存／復元します:
 
-**Persistence Mechanism:**
-- Profiles are serialized to JSON using `kotlinx.serialization`
-- Stored per-container in `<container_dir>/.config/.power-profile`
-- Each container maintains its own independent power profile
-- Includes all profile fields: name, governor, CPU frequencies, GPU power levels, bus levels, auto-tuning settings
+**永続化の仕組み:**
+- プロファイルは `kotlinx.serialization` を使って JSON にシリアライズ
+- コンテナごとに `<container_dir>/.config/.power-profile` に保存
+- 各コンテナが独立した独自のパワープロファイルを持つ
+- プロファイルのすべてのフィールドを含む: 名前、ガバナー、CPU 周波数、GPU パワーレベル、
+  バスレベル、自動チューニング設定
 
-**Lifecycle Integration:**
-1. **On `start(containerDir)`**:
-   - Accepts container directory path for per-container profile storage
-   - Attempts to restore saved profile from `<container_dir>/.config/.power-profile`
-   - If no saved profile exists, applies default Balanced profile from `driver.getDefaultProfile()`
-   - Applies the profile to hardware via driver methods
-   - `.config` directory is created automatically when the profile is saved
+**ライフサイクルへの統合:**
+1. **`start(containerDir)` 時**:
+   - コンテナごとのプロファイル保存先としてコンテナディレクトリのパスを受け取る
+   - `<container_dir>/.config/.power-profile` から保存済みプロファイルの復元を試みる
+   - 保存済みプロファイルが無ければ、`driver.getDefaultProfile()` の既定の「バランス」プロファイルを適用
+   - ドライバーのメソッド経由でプロファイルをハードウェアに適用
+   - `.config` ディレクトリはプロファイル保存時に自動で作成される
 
-2. **On `stop()`**:
-   - Saves `currentProfile` to container-specific file (if not null)
-   - Ensures user's last settings are preserved for next session per container
+2. **`stop()` 時**:
+   - `currentProfile` をコンテナ固有のファイルへ保存（null でない場合）
+   - コンテナごとに、ユーザーの最後の設定が次のセッションのために保持される
 
-3. **During Runtime**:
-   - All setter methods (`setGovernor`, `setMinCpuValue`, etc.) automatically update `currentProfile`
-   - Profile name is set to "Custom" when individual settings are changed
-   - Profile name is preserved when applying preset profiles
+3. **実行中**:
+   - すべての setter（`setGovernor`、`setMinCpuValue` など）が `currentProfile` を自動で更新
+   - 個別の設定を変更するとプロファイル名は「Custom」になる
+   - プリセットプロファイルを適用した場合はプロファイル名が保たれる
 
-**Profile Synchronization:**
-- `PowerManager.currentProfile` always reflects the actual driver state
-- Setter methods update both driver and `currentProfile` atomically
-- Only updates profile if driver operation succeeds
-- Ensures persistence data matches hardware state
+**プロファイルの同期:**
+- `PowerManager.currentProfile` は常に実際のドライバー状態を反映する
+- setter はドライバーと `currentProfile` の両方を原子的に更新する
+- ドライバーの操作が成功した場合のみプロファイルを更新する
+- 永続化データがハードウェアの状態と一致することを保証
 
-**UI Integration:**
-- UI matches profiles by name against `PowerManager.currentProfile?.name`
-- Dropdown shows "Custom" when settings don't match any preset
-- Profile selection updates both UI state and PowerManager immediately
+**UI との統合:**
+- UI はプロファイル名を `PowerManager.currentProfile?.name` と突き合わせる
+- どのプリセットにも一致しない設定のときはドロップダウンに「Custom」を表示
+- プロファイルの選択は UI 状態と PowerManager の両方を即時に更新
 
-## Driver Selection
+## ドライバーの選択
 
-PowerManager automatically selects the appropriate driver during initialization:
+PowerManager は初期化時に適切なドライバーを自動で選択します:
 
-1. **Samsung Performance SDK** - Checked first for Samsung devices
-2. **PServer** - Checked for AYN Odin, Retroid Pocket devices
-3. **Fallback** - Uses NoOpPerformanceDriver (no functionality)
+1. **Samsung Performance SDK** - Samsung 端末の場合に最初に確認
+2. **PServer** - AYN Odin、Retroid Pocket 端末の場合に確認
+3. **フォールバック** - NoOpPerformanceDriver を使用（機能なし）
 
-The selection happens in `PowerManager.initialize(context)` which should be called during app startup.
+選択は `PowerManager.initialize(context)` で行われ、アプリの起動時に呼ぶ必要があります。
 
-## Driver Lifecycle
+## ドライバーのライフサイクル
 
-Drivers follow a game lifecycle pattern with automatic profile persistence:
+ドライバーはゲームのライフサイクルに沿って動作し、プロファイルを自動で永続化します:
 
-1. **Game Environment Setup** (`XServerScreen.kt`)
-   - After `PluviaApp.xEnvironment` is initialized
-   - `PowerManager.start(container.rootDir)` is called with container directory
-   - **Profile Restoration**:
-     - Attempts to load saved profile from `<container_dir>/.config/.power-profile`
-     - If no saved profile, applies default Balanced profile from `driver.getDefaultProfile()`
-     - Applies profile settings to hardware via driver methods
-   - Driver-specific initialization occurs
+1. **ゲーム環境のセットアップ**（`XServerScreen.kt`）
+   - `PluviaApp.xEnvironment` の初期化後
+   - `PowerManager.start(container.rootDir)` をコンテナディレクトリ付きで呼び出す
+   - **プロファイルの復元**:
+     - `<container_dir>/.config/.power-profile` から保存済みプロファイルの読み込みを試みる
+     - 保存済みプロファイルが無ければ、`driver.getDefaultProfile()` の既定の「バランス」プロファイルを適用
+     - ドライバーのメソッド経由でプロファイル設定をハードウェアに適用
+   - ドライバー固有の初期化を実行
 
-2. **Game Running**
-   - User can adjust performance settings via UI
-   - Each setting change calls the appropriate driver method
-   - **Automatic Profile Sync**:
-     - All setter methods update both driver and `PowerManager.currentProfile`
-     - Profile name changes to "Custom" when individual settings are modified
-     - Preset profile names are preserved when applying complete profiles
-   - PServerDriver: Writes to sysfs and sets files to 444 (read-only)
-   - SamsungPerformanceDriver: Calls `performanceManager.start(params)` with new settings
+2. **ゲーム実行中**
+   - ユーザーは UI からパフォーマンス設定を調整できる
+   - 設定の変更ごとに該当するドライバーのメソッドを呼ぶ
+   - **プロファイルの自動同期**:
+     - すべての setter がドライバーと `PowerManager.currentProfile` の両方を更新
+     - 個別の設定を変更するとプロファイル名が「Custom」になる
+     - プロファイル全体を適用した場合はプリセット名が保たれる
+   - PServerDriver: sysfs へ書き込み、ファイルを 444（読み取り専用）にする
+   - SamsungPerformanceDriver: 新しい設定で `performanceManager.start(params)` を呼ぶ
 
-3. **Game Environment Shutdown** (`PluviaApp.shutdownEnvironment()`)
-   - `PowerManager.stop()` is called
-   - **Profile Persistence**:
-     - Saves `currentProfile` to container-specific file for next session
-   - **Hardware Restoration**:
+3. **ゲーム環境の終了**（`PluviaApp.shutdownEnvironment()`）
+   - `PowerManager.stop()` を呼ぶ
+   - **プロファイルの永続化**:
+     - `currentProfile` をコンテナ固有のファイルへ保存し、次のセッションに引き継ぐ
+   - **ハードウェアの復元**:
      - PServerDriver:
-       1. Resets CPU frequencies to full range (prevents slowness from Power Save)
-       2. Resets GPU power levels to full range
-       3. Restores CPU governor to first available governor
-       4. Restores all modified sysfs files to 644 permissions
-     - SamsungPerformanceDriver: Calls `performanceManager.stop()` to stop all performance controls
+       1. CPU 周波数を全範囲へ戻す（Power Save による重さを防止）
+       2. GPU パワーレベルを全範囲へ戻す
+       3. CPU ガバナーを最初に利用可能なガバナーへ戻す
+       4. 変更したすべての sysfs ファイルを 644 権限へ戻す
+     - SamsungPerformanceDriver: `performanceManager.stop()` を呼び、すべてのパフォーマンス制御を停止
 
-## Adding New Drivers
+## 新しいドライバーの追加
 
-To add support for a new device:
+新しい端末への対応を追加するには:
 
-1. Create a new driver class in `drivers/` folder extending `PerformanceDriver`
-2. Implement all abstract methods according to device capabilities:
-   - **Required**: `getDefaultProfile()` - Return a Balanced profile for the device
-     - Should return middle-performance settings (50% CPU, 50% GPU)
-     - Use `PerformancePreset.BALANCED.displayName` for the profile name
-     - Calculate appropriate values based on device's available frequencies/levels
-3. Add necessary imports:
+1. `drivers/` フォルダに `PerformanceDriver` を継承した新しいドライバークラスを作成
+2. 端末の能力に応じてすべての抽象メソッドを実装:
+   - **必須**: `getDefaultProfile()` - その端末の「バランス」プロファイルを返す
+     - 中程度の性能設定（CPU 50%、GPU 50%）を返すべき
+     - プロファイル名には `PerformancePreset.BALANCED.displayName` を使う
+     - 端末の利用可能な周波数／レベルに基づいて適切な値を計算する
+3. 必要な import を追加:
    ```kotlin
    import app.gamenative.powercontrol.PowerProfile
    import app.gamenative.powercontrol.profiles.CpuGovernor
    import app.gamenative.powercontrol.profiles.PerformancePreset
    ```
-4. Update `PowerManager.initialize()` to include the new driver in the selection logic:
+4. `PowerManager.initialize()` を更新して、選択ロジックに新しいドライバーを含める:
 
 ```kotlin
 fun initialize(context: Context) {
@@ -637,24 +653,24 @@ fun initialize(context: Context) {
 }
 ```
 
-## Implementation Details
+## 実装の詳細
 
 ### SamsungPerformanceDriver
 
-**Samsung Performance SDK Integration:**
-- Uses `com.samsung.sdk.sperf` package
-- Requires `perfsdk-v1.0.0.jar` in `app/src/main/lib/`
-- Requires `INTERNET` permission in AndroidManifest.xml
-- Initializes SDK with `SPerf.initialize(context)`
-- Creates `PerformanceManager` instance for control
+**Samsung Performance SDK との統合:**
+- `com.samsung.sdk.sperf` パッケージを使用
+- `app/src/main/lib/` に `perfsdk-v1.0.0.jar` が必要
+- AndroidManifest.xml に `INTERNET` 権限が必要
+- `SPerf.initialize(context)` で SDK を初期化
+- 制御用に `PerformanceManager` インスタンスを作成
 
-**Performance Levels:**
-Samsung SDK uses performance levels (1-4) instead of raw frequencies:
-- Level 0: Disabled (system default, not used in driver)
-- Level 1: Low performance
-- Level 2: Medium performance
-- Level 3: High performance
-- Level 4: Maximum performance
+**パフォーマンスレベル:**
+Samsung SDK は生の周波数ではなくパフォーマンスレベル（1〜4）を使います:
+- レベル 0: 無効（システム既定。ドライバーでは使わない）
+- レベル 1: 低性能
+- レベル 2: 中性能
+- レベル 3: 高性能
+- レベル 4: 最高性能
 
 **CustomParams API:**
 ```kotlin
@@ -663,91 +679,94 @@ params.add(CustomParams.TYPE_CPU_MIN, level, timeout)
 performanceManager.start(params)
 ```
 
-Available parameter types:
-- `TYPE_CPU_MIN` - Minimum CPU performance level
-- `TYPE_CPU_MAX` - Maximum CPU performance level
-- `TYPE_GPU_MIN` - Minimum GPU performance level
-- `TYPE_GPU_MAX` - Maximum GPU performance level
+利用可能なパラメータ種別:
+- `TYPE_CPU_MIN` - CPU パフォーマンスレベルの下限
+- `TYPE_CPU_MAX` - CPU パフォーマンスレベルの上限
+- `TYPE_GPU_MIN` - GPU パフォーマンスレベルの下限
+- `TYPE_GPU_MAX` - GPU パフォーマンスレベルの上限
 
-**Timeout Management:**
-- Timeout in milliseconds (0 = indefinite)
-- Performance controls auto-stop when timeout reached
-- `performanceManager.stop()` called automatically when game stops (via `SamsungPerformanceDriver.stop()`)
+**タイムアウトの管理:**
+- タイムアウトはミリ秒単位（0 = 無限）
+- タイムアウトに達するとパフォーマンス制御は自動停止
+- ゲーム終了時に `performanceManager.stop()` が自動で呼ばれる
+  （`SamsungPerformanceDriver.stop()` 経由）
 
-**Start/Stop Behavior:**
-- `start()`: No-op - Performance controls are started individually by setter methods
-  - Each setter (`setMinCpuValue`, `setMaxCpuValue`, etc.) calls `performanceManager.start(params)`
-  - This allows fine-grained control per parameter
-- `stop()`: Calls `performanceManager.stop()` to stop ALL active performance controls
-  - Called automatically when game environment shuts down
-  - Releases all performance locks
+**開始／停止の挙動:**
+- `start()`: 何もしない - パフォーマンス制御は各 setter が個別に開始する
+  - 各 setter（`setMinCpuValue`、`setMaxCpuValue` など）が `performanceManager.start(params)` を呼ぶ
+  - これによりパラメータ単位の細かい制御が可能
+- `stop()`: `performanceManager.stop()` を呼び、**すべての**有効なパフォーマンス制御を停止する
+  - ゲーム環境の終了時に自動で呼ばれる
+  - すべてのパフォーマンスロックを解放する
 
-**Preset Support:**
-Samsung SDK also provides preset performance profiles:
-- `PRESET_TYPE_CPU` - CPU intensive scenario
-- `PRESET_TYPE_GPU` - GPU intensive scenario
-- `PRESET_TYPE_BUS` - I/O or memory access-intensive scenario
+**プリセットの対応:**
+Samsung SDK はプリセットのパフォーマンスプロファイルも提供します:
+- `PRESET_TYPE_CPU` - CPU 重視のシナリオ
+- `PRESET_TYPE_GPU` - GPU 重視のシナリオ
+- `PRESET_TYPE_BUS` - I/O やメモリアクセス重視のシナリオ
 
-Currently not used in SamsungPerformanceDriver (uses CustomParams for fine control).
+現在の SamsungPerformanceDriver では使っていません（細かい制御には CustomParams を使用）。
 
 ### PServerDriver
 
-**Policy-Based CPU Control (GameMode-inspired):**
+**ポリシーベースの CPU 制御（GameMode に着想）:**
 
-The driver now uses an optimized policy-based approach for CPU control, inspired by [Feral Interactive's GameMode](https://github.com/FeralInteractive/gamemode):
+ドライバーは
+[Feral Interactive の GameMode](https://github.com/FeralInteractive/gamemode) に着想を得た、
+最適化されたポリシーベースの方式で CPU を制御します:
 
-*Discovery Phase (at driver start):*
-- Triggered when `start()` is called (deferred initialization)
-- Resolves symlinks for each CPU's `scaling_governor` file using `File.canonicalPath`
-- Groups CPUs by their actual policy directory (e.g., `/sys/devices/system/cpu/cpufreq/policy0`)
-- Creates a `CpuPolicy` object for each unique policy containing all associated CPU cores
-- Cached for subsequent operations (only discovered once per driver lifecycle)
+*検出フェーズ（ドライバー開始時）:*
+- `start()` が呼ばれたときに実行（遅延初期化）
+- `File.canonicalPath` を使って各 CPU の `scaling_governor` ファイルのシンボリックリンクを解決
+- 実際のポリシーディレクトリ（例: `/sys/devices/system/cpu/cpufreq/policy0`）ごとに CPU をグループ化
+- 一意なポリシーごとに関連する CPU コアをすべて含む `CpuPolicy` オブジェクトを作成
+- 以降の操作のためにキャッシュ（ドライバーのライフサイクル中に 1 度だけ検出）
 
-*Benefits:*
-- **50-75% reduction in IPC calls** on devices with shared policies (typical for modern SoCs)
-- Example: 8-core device with single policy → 3 IPC calls instead of 24 (87.5% reduction)
-- Eliminates redundant writes to CPUs sharing the same cpufreq policy
-- More robust against race conditions from concurrent policy modifications
+*利点:*
+- ポリシーを共有する端末（最近の SoC では一般的）で **IPC 呼び出しが 50〜75% 削減**
+- 例: 単一ポリシーの 8 コア端末 → 24 回ではなく 3 回の IPC 呼び出し（87.5% 削減）
+- 同じ cpufreq ポリシーを共有する CPU への冗長な書き込みを排除
+- ポリシーの同時変更による競合状態に対してより堅牢
 
-*Fallback Behavior:*
-- If policy discovery fails, falls back to per-CPU approach (legacy behavior)
-- Ensures compatibility with all device configurations
-- Logs detailed information about discovered policies for debugging
+*フォールバックの挙動:*
+- ポリシーの検出に失敗した場合は CPU 単位の方式（従来の挙動）にフォールバック
+- あらゆる端末構成との互換性を確保
+- デバッグ用に検出したポリシーの詳細をログ出力
 
-*Validation:*
-- Checks for CPU frequency scaling support at initialization
-- Validates existence of key sysfs paths (`/sys/devices/system/cpu/cpufreq/policy0`, etc.)
-- Provides helpful warnings if cpufreq is disabled in kernel/BIOS
+*検証:*
+- 初期化時に CPU 周波数スケーリングの対応を確認
+- 主要な sysfs パス（`/sys/devices/system/cpu/cpufreq/policy0` など）の存在を検証
+- カーネル／BIOS で cpufreq が無効な場合に役立つ警告を出す
 
-**Binder Service Communication:**
-- Uses Android Binder IPC via reflection to access `ServiceManager`
-- Connects to `PServerBinder` service on supported devices
-- Executes root commands through binder transactions
-- Parcel-based data encoding/decoding
+**Binder サービスとの通信:**
+- リフレクション経由の Android Binder IPC で `ServiceManager` にアクセス
+- 対応端末で `PServerBinder` サービスに接続
+- binder トランザクションで root コマンドを実行
+- Parcel ベースのデータのエンコード／デコード
 
-**Sysfs Paths:**
-All sysfs paths are encapsulated in `PServerDriver`:
+**sysfs パス:**
+すべての sysfs パスは `PServerDriver` にカプセル化されています:
 
 *CPU:*
-- Base: `/sys/devices/system/cpu`
-- Policy: `/sys/devices/system/cpu/cpufreq/policy0`
-- Per-CPU: `/sys/devices/system/cpu/cpu{N}/cpufreq/`
+- ベース: `/sys/devices/system/cpu`
+- ポリシー: `/sys/devices/system/cpu/cpufreq/policy0`
+- CPU 単位: `/sys/devices/system/cpu/cpu{N}/cpufreq/`
 
-*GPU (Adreno):*
-- Base: `/sys/class/kgsl/kgsl-3d0`
+*GPU（Adreno）:*
+- ベース: `/sys/class/kgsl/kgsl-3d0`
 - Devfreq: `/sys/class/kgsl/kgsl-3d0/devfreq`
-- Frequency: `/sys/class/kgsl/kgsl-3d0/devfreq/cur_freq`
-- Available frequencies: `/sys/class/kgsl/kgsl-3d0/devfreq/available_frequencies`
-- Power levels: `/sys/class/kgsl/kgsl-3d0/min_pwrlevel`, `max_pwrlevel`
-- Power level count: `/sys/class/kgsl/kgsl-3d0/num_pwrlevels`
+- 周波数: `/sys/class/kgsl/kgsl-3d0/devfreq/cur_freq`
+- 利用可能な周波数: `/sys/class/kgsl/kgsl-3d0/devfreq/available_frequencies`
+- パワーレベル: `/sys/class/kgsl/kgsl-3d0/min_pwrlevel`、`max_pwrlevel`
+- パワーレベル数: `/sys/class/kgsl/kgsl-3d0/num_pwrlevels`
 
-**Fallback Mechanism:**
-1. Try PServer binder service (primary)
-2. Fall back to direct file read (if accessible)
-3. Fail gracefully with logging
+**フォールバックの仕組み:**
+1. PServer binder サービスを試す（第一候補）
+2. アクセス可能なら直接ファイル読み取りへフォールバック
+3. 失敗してもログを残して穏やかに終わる
 
-**Command Optimization:**
-Commands are concatenated with semicolons for faster execution:
+**コマンドの最適化:**
+実行を速くするため、コマンドはセミコロンで連結されます:
 ```kotlin
 // Read operation
 executeAsRoot("cat '/sys/devices/system/cpu/cpufreq/policy0/scaling_governor'")
@@ -759,38 +778,40 @@ executeAsRoot("chmod 644 '$path'; echo '$value' > '$path'; chmod 444 '$path'")
 executeAsRoot("chmod 644 '$path1'; chmod 644 '$path2'; chmod 644 '$path3'")
 ```
 
-**Permission Management:**
-- Write operations use concatenated commands: `chmod 644 → echo → chmod 444` (single IPC call)
-- Files are set to 444 (read-only) after writes to prevent accidental modifications
-- On `stop()`, all modified files are restored to 644 permissions using concatenated chmod commands
-- Governor files are automatically added to restoration list after `setGovernor()` is called
-- Tracks modified files in `modifiedSysfsFiles` set to ensure proper cleanup
+**権限の管理:**
+- 書き込み操作は連結したコマンドを使う: `chmod 644 → echo → chmod 444`（IPC 呼び出しは 1 回）
+- 書き込み後はファイルを 444（読み取り専用）にして誤った変更を防ぐ
+- `stop()` では、変更したすべてのファイルを連結した chmod コマンドで 644 権限へ戻す
+- `setGovernor()` が呼ばれた後は、ガバナーファイルが復元リストに自動で追加される
+- 変更したファイルは `modifiedSysfsFiles` セットで追跡し、確実に後始末する
 
-### Auto-Tuning Implementation
+### 自動チューニングの実装
 
-**Overview:**
-The auto-tuning system uses PID (Proportional-Integral-Derivative) controllers to automatically adjust CPU frequencies and GPU power levels based on real-time performance metrics. This maintains target FPS while optimizing resource consumption.
+**概要:**
+自動チューニングシステムは PID（比例・積分・微分）コントローラーを使い、リアルタイムの性能指標に
+基づいて CPU 周波数と GPU パワーレベルを自動調整します。目標 FPS を維持しながらリソース消費を
+最適化します。
 
-**Architecture:**
+**アーキテクチャ:**
 
 *PerformanceAutoTuner:*
-- Manages two independent PID controllers (CPU and GPU)
-- Runs on background thread with 2-second tuning cycles
-- Monitors: target FPS, current FPS, CPU usage, GPU usage
-- Adjusts performance levels between 20-100%
-- Maps performance percentages to actual hardware frequencies/levels
+- 2 つの独立した PID コントローラー（CPU 用、GPU 用）を管理
+- 2 秒周期のチューニングをバックグラウンドスレッドで実行
+- 監視項目: 目標 FPS、現在の FPS、CPU 使用率、GPU 使用率
+- パフォーマンスレベルを 20〜100% の範囲で調整
+- パフォーマンスの百分率を実際のハードウェアの周波数／レベルへ対応付け
 
 *PidController:*
-- Implements classic PID control algorithm
-- **Proportional term (Kp=0.5)**: Immediate response to FPS error
-- **Integral term (Ki=0.2)**: Eliminates steady-state error over time
-- **Derivative term (Kd=0.1)**: Dampens oscillations for stability
-- **Anti-windup protection**: Integral term clamped to ±50.0
-- **Output clamping**: Constrains adjustments to ±100.0 range
+- 古典的な PID 制御アルゴリズムを実装
+- **比例項（Kp=0.5）**: FPS 誤差への即時応答
+- **積分項（Ki=0.2）**: 時間経過とともに定常偏差を解消
+- **微分項（Kd=0.1）**: 振動を抑えて安定させる
+- **ワインドアップ防止**: 積分項を ±50.0 に制限
+- **出力のクランプ**: 調整量を ±100.0 の範囲に制限
 
-**Tuning Logic:**
+**チューニングのロジック:**
 
-*Reduce Performance (Conservative):*
+*性能を下げる（保守的）:*
 ```
 if (fpsError < 2.0 && usage < 70% && performance > 25%) {
     performance -= 2.0%  // Gradual reduction
@@ -798,7 +819,7 @@ if (fpsError < 2.0 && usage < 70% && performance > 25%) {
 }
 ```
 
-*Increase Performance (Aggressive):*
+*性能を上げる（積極的）:*
 ```
 if (fpsError > 5.0 || usage > 85%) {
     adjustment = PID.calculate(targetFps, currentFps)
@@ -806,45 +827,45 @@ if (fpsError > 5.0 || usage > 85%) {
 }
 ```
 
-*Maintain Performance (Stable):*
+*性能を維持する（安定）:*
 ```
 else {
     reset PID controller  // Clear integral/derivative state
 }
 ```
 
-**Integration Points:**
+**統合ポイント:**
 
-1. **XServerScreen** → Sets `PowerManager.targetFps` from frame rate limiter
-2. **PerformanceHudView** → Updates `PowerManager.currentFps`, `currentCpuUsage`, `currentGpuUsage`
-3. **PowerManager** → Creates `PerformanceAutoTuner` with callbacks:
-   - `onCpuFrequencyChange(freq)` → Calls `setMinCpuValue()` and `setMaxCpuValue()`
-   - `onGpuLevelChange(level)` → Calls `setMinGpuPowerLevel()` and `setMaxGpuPowerLevel()`
-4. **PowerProfile** → `enableAutoTuning` flag controls auto-tuner lifecycle
+1. **XServerScreen** → フレームレートリミッターから `PowerManager.targetFps` を設定
+2. **PerformanceHudView** → `PowerManager.currentFps`、`currentCpuUsage`、`currentGpuUsage` を更新
+3. **PowerManager** → コールバック付きで `PerformanceAutoTuner` を生成:
+   - `onCpuFrequencyChange(freq)` → `setMinCpuValue()` と `setMaxCpuValue()` を呼ぶ
+   - `onGpuLevelChange(level)` → `setMinGpuPowerLevel()` と `setMaxGpuPowerLevel()` を呼ぶ
+4. **PowerProfile** → `enableAutoTuning` フラグが自動チューナーのライフサイクルを制御
 
-**UI Behavior:**
-- When auto-tuning is enabled, manual CPU/GPU controls are hidden
-- Auto-tuning toggle is only shown when driver supports both CPU and GPU control
-- Profile name changes to "Custom" when auto-tuning is toggled
+**UI の挙動:**
+- 自動チューニングが有効なときは手動の CPU／GPU 制御を非表示にする
+- 自動チューニングの切り替えは、ドライバーが CPU と GPU の両方の制御に対応している場合のみ表示
+- 自動チューニングを切り替えるとプロファイル名が「Custom」になる
 
-**Performance Characteristics:**
+**性能の特性:**
 
-*Startup Phase (0-10 seconds):*
-- PID controllers initialize with zero state
-- Performance starts at 50% baseline
-- Rapid adjustments as integral term accumulates
+*起動フェーズ（0〜10 秒）:*
+- PID コントローラーはゼロの状態で初期化
+- 性能は 50% の基準値から開始
+- 積分項が蓄積されるにつれて急速に調整
 
-*Steady State (10+ seconds):*
-- Small oscillations around target FPS (±2 FPS)
-- Integral term compensates for steady-state error
-- Derivative term prevents overshoot
+*定常状態（10 秒以降）:*
+- 目標 FPS の周辺での小さな振動（±2 FPS）
+- 積分項が定常偏差を補償
+- 微分項がオーバーシュートを防ぐ
 
-*Load Changes:*
-- Scene complexity increase → FPS drops → PID increases performance
-- Scene complexity decrease → FPS stable, usage drops → Gradual performance reduction
-- Sudden FPS spike → Derivative term dampens response
+*負荷の変化:*
+- シーンの複雑さが増す → FPS が下がる → PID が性能を上げる
+- シーンの複雑さが減る → FPS は安定し使用率が下がる → 性能を徐々に下げる
+- FPS が急に跳ね上がる → 微分項が応答を抑える
 
-**Example Tuning Session (Simplified/Illustrative):**
+**チューニングセッションの例（簡略化した説明用）:**
 ```
 [0s]  Target: 60 FPS, Current: 45 FPS, CPU usage: 50%, GPU usage: 50%
       → Large FPS error (15.0 > 5.0 threshold)
@@ -866,16 +887,16 @@ else {
       → Gradual reduction (-2% step)
       → CPU perf: 54% → 52%, GPU perf: 54% → 52%
 ```
-*Note: Actual PID calculations use Kp=0.5, Ki=0.2, Kd=0.1 with ADJUSTMENT_DECAY_FACTOR=0.3.
-Enable verbose logging to see exact P/I/D terms and outputs.*
+*注: 実際の PID 計算は Kp=0.5、Ki=0.2、Kd=0.1、ADJUSTMENT_DECAY_FACTOR=0.3 を使います。
+詳細ログを有効にすると、P/I/D 各項と出力の正確な値を確認できます。*
 
-**Logging:**
-- Enable verbose logging via `PerformanceAutoTuner(enableLogging = true)`
-- Logs PID calculations: error, P/I/D terms, output
-- Logs tuning decisions: FPS, usage, performance adjustments
-- Logs frequency/level changes applied to hardware
+**ログ出力:**
+- `PerformanceAutoTuner(enableLogging = true)` で詳細ログを有効化
+- PID 計算をログ出力: 誤差、P/I/D 各項、出力
+- チューニングの判断をログ出力: FPS、使用率、性能の調整量
+- ハードウェアに適用した周波数／レベルの変更をログ出力
 
-## File Structure
+## ファイル構成
 
 ```
 powercontrol/
@@ -895,23 +916,24 @@ powercontrol/
 └── README.md                          # This file
 ```
 
-## References
+## 参考資料
 
-### Acknowledgments
+### 謝辞
 
-This implementation was inspired by and references the following projects:
+この実装は次のプロジェクトに着想を得ており、参照しています:
 
-- [GameMode](https://github.com/FeralInteractive/gamemode) - Linux daemon for optimizing system performance on demand (by Feral Interactive)
-  - Policy-based CPU control approach
-  - Sysfs validation techniques
-  - Robust error handling patterns
-- [ClusterTune](https://github.com/AurelioB/ClusterTune) - CPU frequency and governor control for Android devices
-- [Pulse](https://github.com/keiretrogaming/pulse) - Performance tuning for handheld gaming devices
+- [GameMode](https://github.com/FeralInteractive/gamemode) - オンデマンドでシステム性能を最適化する
+  Linux デーモン（Feral Interactive 製）
+  - ポリシーベースの CPU 制御の手法
+  - sysfs の検証テクニック
+  - 堅牢なエラー処理のパターン
+- [ClusterTune](https://github.com/AurelioB/ClusterTune) - Android 端末向けの CPU 周波数とガバナーの制御
+- [Pulse](https://github.com/keiretrogaming/pulse) - 携帯ゲーミング端末向けのパフォーマンスチューニング
 
-### Additional Resources
+### 参考リンク集
 
-- [Samsung Performance SDK - Overview](https://developer.samsung.com/galaxy-performance/overview.html)
-- [Samsung Performance SDK - Programming Guide](https://developer.samsung.com/galaxy-performance/programming-guide.html)
-- [Samsung Performance SDK - API Reference](https://developer.samsung.com/galaxy-performance/api-reference)
-- PServer: Custom binder service on AYN Odin, Retroid Pocket devices
-- [Linux CPU Frequency Scaling](https://www.kernel.org/doc/html/latest/admin-guide/pm/cpufreq.html)
+- [Samsung Performance SDK - 概要](https://developer.samsung.com/galaxy-performance/overview.html)
+- [Samsung Performance SDK - プログラミングガイド](https://developer.samsung.com/galaxy-performance/programming-guide.html)
+- [Samsung Performance SDK - API リファレンス](https://developer.samsung.com/galaxy-performance/api-reference)
+- PServer: AYN Odin、Retroid Pocket 端末上の独自 binder サービス
+- [Linux の CPU 周波数スケーリング](https://www.kernel.org/doc/html/latest/admin-guide/pm/cpufreq.html)

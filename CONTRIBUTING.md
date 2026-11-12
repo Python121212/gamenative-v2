@@ -1,78 +1,78 @@
-# Contributing to GameNative
+# GameNative へのコントリビューション
 
-Thanks for your interest in contributing. We welcome pull requests, bug reports, and feedback.
+ご関心ありがとうございます。プルリクエスト、バグ報告、フィードバックを歓迎します。
 
-## Quick Start
+## クイックスタート
 
-1. Join our [Discord server](https://discord.gg/2hKv4VfZfE). If you have access to `#code-changes`, please discuss your change there before opening a PR.
-2. Fork the repo and create a branch for your changes.
-3. See the **Building** section in [README](README.md) for setup instructions.
-4. Open a pull request with a clear description and attach a short recording/GIF of the change.
+1. [Discord サーバー](https://discord.gg/2hKv4VfZfE) に参加してください。`#code-changes` にアクセスできる場合は、PR を作成する前にそこで変更内容を相談してください。
+2. リポジトリをフォークし、変更用のブランチを作成します。
+3. セットアップ手順は [README](README.md) の **ビルド** セクションを参照してください。
+4. 変更内容を明確に書いたプルリクエストを作成し、短い録画／GIF を添付します。
 
-## Picking Something to Fix
+## 着手する作業を選ぶ
 
-The nightly list of games that don't work, with one issue per game, lives at [GameNative/gamenative-compat](https://github.com/GameNative/gamenative-compat). Open the game's issue, check the comments for anyone already working on it, and comment that you are taking it. Open your PR in the repo the fix belongs to (this one, [proton-wine](https://github.com/GameNative/proton-wine), [FEX](https://github.com/GameNative/FEX), or a wrapper) and comment on the issue with the link once it is up or merged. The issue closes on its own once players are running the game. To donate a key for a broken game so someone can fix it, email [support@gamenative.app](mailto:support@gamenative.app).
+動かないゲームの夜次更新リストは、ゲームごとに 1 つの Issue として [GameNative/gamenative-compat](https://github.com/GameNative/gamenative-compat) にあります。ゲームの Issue を開き、コメントで既に対応中の人がいないか確認してから、担当する旨をコメントしてください。修正内容に応じたリポジトリ（本リポジトリ、[proton-wine](https://github.com/GameNative/proton-wine)、[FEX](https://github.com/GameNative/FEX)、またはラッパー）で PR を作成し、作成またはマージ後にそのリンクを Issue にコメントします。プレイヤーがゲームを動かせるようになると Issue は自動的に閉じられます。動かないゲームの修正のためにキーを提供したい場合は [support@gamenative.app](mailto:support@gamenative.app) までメールしてください。
 
-## Scope of Contributions
+## コントリビューションの範囲
 
-GameNative is currently focused on:
-- Core functionality
-- Stability and performance
-- Compatibility improvements
+GameNative が現在注力しているのは次の分野です:
+- コア機能
+- 安定性とパフォーマンス
+- 互換性の改善
 
-Out of scope (unless explicitly approved beforehand):
-- New features
-- UI/UX changes
-- Cosmetic-only changes
-- Preference-driven behavior changes
+範囲外（事前に明示的な承認がある場合を除く）:
+- 新機能
+- UI/UX の変更
+- 見た目だけの変更
+- 好みに基づく挙動の変更
 
-## Process
+## 手順
 
-Before opening a PR:
-1. Discuss the change in #code-changes
-2. Wait for it to be acknowledged/approved
-3. Then open a PR
+PR を作成する前に:
+1. `#code-changes` で変更内容を相談する
+2. 承認／了承を得る
+3. そのうえで PR を作成する
 
-PRs that are not discussed beforehand or are out of scope may be closed without review.
+事前に相談のない PR や範囲外の PR は、レビューなしでクローズされることがあります。
 
-## Reviews
+## レビュー
 
-PRs are reviewed once a week. Please be patient.
+PR は週に 1 回レビューします。お待ちいただけると助かります。
 
-## Reporting Issues
+## 問題の報告
 
-Please report bugs and request support through our [Discord server](https://discord.gg/2hKv4VfZfE). GitHub issues are automatically closed.
+バグ報告やサポート依頼は [Discord サーバー](https://discord.gg/2hKv4VfZfE) でお願いします。GitHub の Issue は自動的にクローズされます。
 
-## Contribution Terms
+## コントリビューションの条件
 
-We want contributing to feel straightforward and fair.
+コントリビューションは気軽で公平であってほしいと考えています。
 
-- You keep ownership of your work.
-- You confirm you have the right to submit your contribution.
-- You allow maintainers to use your contribution in GameNative and future versions.
-- This can include relicensing when needed to keep the project sustainable. Our default intent is to keep GameNative free and open source; if major licensing changes are ever considered, we will communicate them transparently with the community.
-- Public forks continue under the project's published license, unless maintainers separately grant extra rights. This helps protect contributors by ensuring forks cannot take your code proprietary in violation of the license.
+- あなたの成果物の所有権はあなたに残ります。
+- 投稿する権利があることを確認してください。
+- メンテナーが GameNative および将来のバージョンで、あなたのコントリビューションを利用することを許可してください。
+- これには、プロジェクトを継続可能にするために必要な再ライセンスが含まれる場合があります。既定の方針は GameNative を無料かつオープンソースに保つことです。大きなライセンス変更を検討する場合は、コミュニティに対して透明性をもって共有します。
+- 公開フォークは、メンテナーが別途追加の権利を認めない限り、プロジェクトの公開ライセンスの下で継続します。これは、フォークがライセンスに反してあなたのコードをプロプライエタリ化することを防ぎ、コントリビューターを保護するためのものです。
 
-By opening a pull request, you agree to these terms.
+プルリクエストを作成することで、これらの条件に同意したものとみなされます。
 
 <details>
-<summary>Legal details</summary>
+<summary>法務的な詳細</summary>
 
-The legal clauses below are directly based on the [Apache Software Foundation Individual Contributor License Agreement (ICLA)](https://www.apache.org/licenses/icla.pdf), which is widely used as a template across open-source projects.
+以下の法的条項は、オープンソースプロジェクトで広くテンプレートとして使われている [Apache Software Foundation Individual Contributor License Agreement (ICLA)](https://www.apache.org/licenses/icla.pdf) に直接基づいています。
 
-Except for the license granted below to the project maintainers, you reserve all right, title, and interest in and to your contributions.
+以下でプロジェクトのメンテナーに付与されるライセンスを除き、あなたのコントリビューションに関するすべての権利・権原・利益はあなたに留保されます。
 
-Grant of Copyright License: Subject to these terms, you hereby grant to the project maintainers a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, sublicense, and distribute your contributions and such derivative works.
+著作権ライセンスの付与: 本条件に従い、あなたはプロジェクトのメンテナーに対して、あなたのコントリビューションおよびその派生物を複製し、派生物を作成し、公開表示・公開上演し、サブライセンスし、頒布するための、永続的・全世界・非独占・無償・ロイヤリティフリー・取消不能の著作権ライセンスを付与します。
 
-You represent that you are legally entitled to grant the above license and that your contributions are your original creation (or that you otherwise have sufficient rights to submit them).
+あなたは、上記ライセンスを付与する法的権限を有し、かつあなたのコントリビューションがあなたの独自の創作物であること（または投稿するのに十分な権利を有していること）を表明します。
 
 </details>
 
-### Maintainer Authority
+### メンテナーの権限
 
-Maintainers have final discretion over:
-- Project direction and priorities
-- What contributions are accepted or rejected
-- When and how contributions are reviewed and merged
+メンテナーは以下について最終的な裁量権を持ちます:
+- プロジェクトの方向性と優先順位
+- どのコントリビューションを採用／却下するか
+- コントリビューションをいつ、どのようにレビュー・マージするか
 
-Not all contributions will be accepted, and decisions may change as the project evolves.
+すべてのコントリビューションが採用されるわけではなく、判断はプロジェクトの進化に伴い変わる可能性があります。

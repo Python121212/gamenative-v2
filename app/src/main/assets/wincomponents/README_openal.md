@@ -1,74 +1,72 @@
-# OpenAL Soft — Audio DLL Override
+# OpenAL Soft — オーディオ DLL の上書き
 
-The `openal.tzst` archive contains OpenAL Soft v1.25.1 DLLs that provide
-OpenAL audio support for games like Mirror's Edge, some Unreal Engine 3
-titles, and GOG releases that rely on OpenAL.
+`openal.tzst` には OpenAL Soft v1.25.1 の DLL が入っており、Mirror's Edge や一部の Unreal Engine 3
+タイトル、OpenAL に依存する GOG 版などに OpenAL オーディオ機能を提供します。
 
-## How it works
+## 仕組み
 
-OpenAL is **not** part of the Win Components system (to avoid breaking
-config imports). Instead, the user adds the standard `WINEDLLOVERRIDES`
-environment variable via the container's Environment tab.
+OpenAL は（設定インポートを壊さないために）**Win Components の仕組みには含めていません**。
+代わりに、ユーザーがコンテナの「環境変数」タブから標準の `WINEDLLOVERRIDES` 環境変数を追加します。
 
-### Common presets (available in the dropdown)
+### よく使うプリセット（ドロップダウンから選択可能）
 
-| WINEDLLOVERRIDES value                    | Effect                                                     |
+| WINEDLLOVERRIDES の値                     | 効果                                                       |
 |-------------------------------------------|------------------------------------------------------------|
-| `openal32=native,builtin`                 | Extracts DLLs, Wine prefers native openal32                |
-| `soft_oal=native`                         | Extracts DLLs, Wine uses native soft_oal                   |
-| `openal32=native,builtin;soft_oal=native` | Extracts DLLs, both overrides at once                      |
-| *(not set)*                               | No override — Wine uses its own builtin (default)          |
+| `openal32=native,builtin`                 | DLL を展開し、Wine はネイティブの openal32 を優先            |
+| `soft_oal=native`                         | DLL を展開し、Wine はネイティブの soft_oal を使用            |
+| `openal32=native,builtin;soft_oal=native` | DLL を展開し、両方の上書きを同時に適用                       |
+| *（未設定）*                               | 上書きなし — Wine 内蔵のものを使用（既定）                   |
 
-Users can also type any custom `WINEDLLOVERRIDES` value in the create dialog.
+作成ダイアログで任意の `WINEDLLOVERRIDES` を直接入力することもできます。
 
-At boot, the app:
-1. Reads `WINEDLLOVERRIDES` from the container's env vars
-2. If the value mentions `openal32` or `soft_oal`, extracts `openal.tzst` into `drive_c/windows/`
-3. Passes `WINEDLLOVERRIDES` directly to Wine — no translation needed
+起動時、アプリは次の処理を行います:
+1. コンテナの環境変数から `WINEDLLOVERRIDES` を読み取る
+2. 値に `openal32` または `soft_oal` が含まれていれば、`openal.tzst` を `drive_c/windows/` に展開する
+3. `WINEDLLOVERRIDES` をそのまま Wine に渡す（変換は不要）
 
-### Recommended setting
+### 推奨設定
 
-Use `openal32=native,builtin` for most games. This places `openal32.dll` (the standard
-OpenAL system name) and `soft_oal.dll` (the redistributable name) in both
-`system32/` and `syswow64/`, and tells Wine to prefer the native DLL.
+多くのゲームでは `openal32=native,builtin` を使ってください。これにより `openal32.dll`
+（OpenAL の標準的なシステム名）と `soft_oal.dll`（再配布用の名前）の両方が `system32/` と
+`syswow64/` に配置され、Wine はネイティブ DLL を優先するようになります。
 
-## Archive contents
+## アーカイブの中身
 
 ```
-./system32/openal32.dll    ← 64-bit OpenAL Soft (as system openal32)
-./system32/soft_oal.dll    ← 64-bit OpenAL Soft (original redistributable name)
-./syswow64/openal32.dll    ← 32-bit OpenAL Soft (as system openal32)
-./syswow64/soft_oal.dll    ← 32-bit OpenAL Soft (original redistributable name)
+./system32/openal32.dll    ← 64bit OpenAL Soft（システム名 openal32 として）
+./system32/soft_oal.dll    ← 64bit OpenAL Soft（再配布時の元の名前）
+./syswow64/openal32.dll    ← 32bit OpenAL Soft（システム名 openal32 として）
+./syswow64/soft_oal.dll    ← 32bit OpenAL Soft（再配布時の元の名前）
 ```
 
-Both names coexist: most games load `openal32.dll` via the standard API,
-but some titles (GOG releases, older UE3 games) load `soft_oal.dll` directly.
+両方の名前を同梱しています。多くのゲームは標準 API 経由で `openal32.dll` を読み込みますが、
+一部のタイトル（GOG 版や古い UE3 ゲーム）は `soft_oal.dll` を直接読み込みます。
 
-## How to rebuild openal.tzst
+## openal.tzst の再ビルド方法
 
-1. Download OpenAL Soft from https://openal-soft.org/ (latest release)
-   - You need the **bin** zip with both Win32 and Win64 `soft_oal.dll`
+1. https://openal-soft.org/ から OpenAL Soft（最新リリース）をダウンロードします
+   - Win32 と Win64 の両方の `soft_oal.dll` を含む **bin** zip が必要です
 
-2. Create a staging directory:
+2. ステージングディレクトリを作成します:
    ```
-   system32/openal32.dll    (Win64 soft_oal.dll copied+renamed)
-   system32/soft_oal.dll    (Win64 soft_oal.dll original name)
-   syswow64/openal32.dll    (Win32 soft_oal.dll copied+renamed)
-   syswow64/soft_oal.dll    (Win32 soft_oal.dll original name)
+   system32/openal32.dll    (Win64 soft_oal.dll をコピーしてリネーム)
+   system32/soft_oal.dll    (Win64 soft_oal.dll を元の名前で)
+   syswow64/openal32.dll    (Win32 soft_oal.dll をコピーしてリネーム)
+   syswow64/soft_oal.dll    (Win32 soft_oal.dll を元の名前で)
    ```
 
-3. Create the archive:
+3. アーカイブを作成します:
    ```bash
    cd staging_dir
    tar -cf openal.tar ./system32 ./syswow64
    zstd openal.tar -o openal.tzst
    ```
 
-4. Place `openal.tzst` in `app/src/main/assets/wincomponents/openal.tzst`
+4. `openal.tzst` を `app/src/main/assets/wincomponents/openal.tzst` に配置します
 
-## Games that ship the OpenAL installer
+## OpenAL インストーラを同梱するゲーム
 
-oalinst.exe is never run. When a game ships it (`_CommonRedist/OpenAL`, `redist/`),
-`OpenALRedist.applyForLaunch` adds `openal32=native,builtin` to the container's
-`WINEDLLOVERRIDES` unless an `openal32` or `soft_oal` override is already set, so a
-user's own choice from the table above is kept. Either way the archive is extracted at launch.
+`oalinst.exe` は決して実行されません。ゲームが同梱している場合（`_CommonRedist/OpenAL`、`redist/` など）、
+`OpenALRedist.applyForLaunch` がコンテナの `WINEDLLOVERRIDES` に `openal32=native,builtin` を追加します。
+ただし `openal32` または `soft_oal` の上書きが既に設定されている場合は追加せず、上表から選んだ
+ユーザー自身の設定が尊重されます。いずれの場合も、起動時にアーカイブは展開されます。

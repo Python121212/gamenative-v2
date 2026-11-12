@@ -1,38 +1,38 @@
-# GPU-Based BGRA to RGBA Converter
+# GPU による BGRA → RGBA 変換
 
-## Overview
+## 概要
 
-This implementation provides **GPU-accelerated** R/B channel swapping for converting BGRA buffers to RGBA format. It automatically selects the best conversion method based on device capabilities.
+BGRA バッファを RGBA 形式へ変換するための、**GPU アクセラレーション**による R/B チャンネル入れ替えを提供します。端末の能力に応じて最適な変換方式を自動で選択します。
 
-## Architecture
+## アーキテクチャ
 
-### Two Conversion Methods
+### 2 つの変換方式
 
-1. **Shader Converter** (`shader_converter.cpp`)
-   - **Fastest** method using OpenGL ES 3.1+ compute shaders
-   - Parallel processing with 16x16 work groups
-   - ~0.5-1ms for 720p conversion
-   - Requires: OpenGL ES 3.1+
+1. **シェーダー変換**（`shader_converter.cpp`）
+   - OpenGL ES 3.1 以上のコンピュートシェーダーを使う**最速**の方式
+   - 16x16 のワークグループで並列処理
+   - 720p の変換で約 0.5〜1ms
+   - 必要なもの: OpenGL ES 3.1 以上
 
-2. **OpenGL Converter** (`opengl_converter.cpp`)
-   - **Fallback** method using fragment shader
-   - Works on all devices with OpenGL ES 3.0+
-   - ~1-2ms for 720p conversion
-   - Maximum compatibility
+2. **OpenGL 変換**（`opengl_converter.cpp`）
+   - フラグメントシェーダーを使う**フォールバック**方式
+   - OpenGL ES 3.0 以上のすべての端末で動作
+   - 720p の変換で約 1〜2ms
+   - 互換性を最優先
 
-### Automatic Selection
+### 自動選択
 
-The system automatically:
-1. Tries **compute shader** first (fastest)
-2. Falls back to **OpenGL blit** if compute shader fails
-3. Permanently switches to fallback after first failure
-4. Logs which method is being used
+システムは自動で次の動作を行います:
+1. まず**コンピュートシェーダー**を試す（最速）
+2. 失敗したら **OpenGL blit** にフォールバック
+3. 一度失敗したら以後は恒久的にフォールバックを使う
+4. どちらを使っているかをログに出力
 
-## Integration
+## 統合
 
 ### ASurfaceRendererContext
 
-The GPU converters are integrated into `ASurfaceRendererContext`:
+GPU コンバータは `ASurfaceRendererContext` に統合されています:
 
 ```cpp
 class ASurfaceRendererContext {
@@ -47,7 +47,7 @@ class ASurfaceRendererContext {
 };
 ```
 
-### Usage in setWindowBuffer
+### setWindowBuffer での使用例
 
 ```cpp
 if (needsRBSwap) {
@@ -64,19 +64,19 @@ if (needsRBSwap) {
 }
 ```
 
-## Performance Comparison
+## パフォーマンス比較
 
-| Method | Time (720p) | Compatibility | Notes |
+| 方式 | 処理時間（720p） | 互換性 | 備考 |
 |--------|-------------|---------------|-------|
-| **CPU (old)** | ~15-30ms | 100% | Blocks rendering thread |
-| **OpenGL Blit** | ~1-2ms | ES 3.0+ (99%) | Good fallback |
-| **Compute Shader** | ~0.5-1ms | ES 3.1+ (95%) | Best performance |
+| **CPU（旧方式）** | 約 15〜30ms | 100% | レンダリングスレッドを止める |
+| **OpenGL Blit** | 約 1〜2ms | ES 3.0+（99%） | 良好なフォールバック |
+| **コンピュートシェーダー** | 約 0.5〜1ms | ES 3.1+（95%） | 最高性能 |
 
-**Speedup: 15-60x faster than CPU!** 🚀
+**高速化: CPU 比で 15〜60 倍！** 🚀
 
-## Shader Code
+## シェーダーコード
 
-### Compute Shader
+### コンピュートシェーダー
 ```glsl
 #version 310 es
 layout(local_size_x = 16, local_size_y = 16) in;
@@ -91,7 +91,7 @@ void main() {
 }
 ```
 
-### Fragment Shader
+### フラグメントシェーダー
 ```glsl
 #version 300 es
 precision mediump float;
@@ -105,23 +105,23 @@ void main() {
 }
 ```
 
-## Synchronization
+## 同期
 
-Both converters properly handle fence synchronization:
-- **Input fence**: Waits for source buffer to be ready
-- **Output fence**: Signals when conversion is complete
-- Uses `EGLSyncKHR` for GPU-CPU synchronization
+どちらのコンバータもフェンス同期を適切に扱います:
+- **入力フェンス**: 元バッファの準備完了を待つ
+- **出力フェンス**: 変換完了を通知する
+- GPU と CPU の同期には `EGLSyncKHR` を使用
 
-## Error Handling
+## エラー処理
 
-- Graceful fallback if compute shader not supported
-- Falls back to original buffer if GPU conversion fails
-- Logs warnings for debugging
-- Cleans up resources on failure
+- コンピュートシェーダー非対応時は安全にフォールバック
+- GPU 変換に失敗した場合は元のバッファをそのまま使う
+- デバッグ用に警告をログ出力
+- 失敗時はリソースを解放
 
-## Build Configuration
+## ビルド設定
 
-Added to `CMakeLists.txt`:
+`CMakeLists.txt` に追加済み:
 ```cmake
 add_library(asurface_renderer SHARED
     asurface_jni.cpp
@@ -136,34 +136,34 @@ target_link_libraries(asurface_renderer
 )
 ```
 
-## Debugging
+## デバッグ
 
-Enable logs to see which converter is being used:
+ログを有効にすると、どちらのコンバータが使われているか確認できます:
 ```
 adb logcat | grep "ASurfaceRenderer"
 ```
 
-Expected output:
+想定される出力:
 ```
 I ASurfaceRenderer: GPU converters initialized (will auto-select based on device capability)
 D ASurfaceRenderer: Using compute shader for R/B conversion
 ```
 
-Or if compute shader not supported:
+コンピュートシェーダー非対応の場合はこうなります:
 ```
 W ASurfaceRenderer: Compute shader conversion failed, falling back to OpenGL blit
 D ASurfaceRenderer: Using OpenGL blit for R/B conversion
 ```
 
-## Files
+## ファイル
 
-- `opengl_converter.h/cpp` - OpenGL blit implementation
-- `shader_converter.h/cpp` - Compute shader implementation
-- `ASurfaceRendererContext.h/cpp` - Integration and auto-selection logic
+- `opengl_converter.h/cpp` - OpenGL blit の実装
+- `shader_converter.h/cpp` - コンピュートシェーダーの実装
+- `ASurfaceRendererContext.h/cpp` - 統合と自動選択のロジック
 
-## Future Improvements
+## 今後の改善案
 
-1. **Buffer caching**: Reuse temporary buffers instead of allocating each frame
-2. **Zero-copy**: Investigate if format conversion can be done in-place
-3. **Vulkan**: Add Vulkan compute shader path for even better performance
-4. **Async conversion**: Overlap conversion with other work
+1. **バッファのキャッシュ**: 毎フレーム確保せず、一時バッファを使い回す
+2. **ゼロコピー**: フォーマット変換をその場で行えるか検討する
+3. **Vulkan**: さらなる高速化のため Vulkan コンピュートシェーダーの経路を追加する
+4. **非同期変換**: 変換を他の処理と重ねる
