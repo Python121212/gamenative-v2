@@ -1,5 +1,6 @@
 package app.gamenative.utils
 
+import app.gamenative.service.drive.DriveAutoBackup
 import android.content.Context
 import app.gamenative.PrefManager
 import java.io.File
@@ -243,6 +244,8 @@ object CloudSaveBackupManager {
             }
             Timber.tag(TAG).i("Save backup ${kind.name} for $provider/$gameId: ${files.size} file(s), $total bytes -> ${zip.name}")
             prune(dir, provider, gameId, kind, keepFile)
+            // Hand the finished archive to the Drive pseudo-SSD queue.
+            DriveAutoBackup.enqueueIfEnabled(context, zip, note = "$provider/$gameId")
             return Outcome.WRITTEN
         } catch (e: CancellationException) {
             throw e

@@ -3333,4 +3333,24 @@
     <string name="support_wait_stop">Stop</string>
     <string name="support_reply_ready_tap">Tap to read it.</string>
     <string name="support_notify_me">Notify me when the reply arrives</string>
+
+    <!-- Google Drive pseudo-SSD -->
+    <string name="settings_drive_storage_title">Google Drive pseudo-SSD</string>
+    <string name="settings_drive_storage_empty">No accounts added · 15 GB per account</string>
+    <string name="settings_drive_storage_summary">%1$d accounts · %2$s of %3$s used</string>
+    <string name="drive_dialog_title">Google Drive pseudo-SSD</string>
+    <string name="drive_dialog_subtitle">Finished files and folders are uploaded to Drive one at a time. Add multiple accounts to get 15 GB of storage for each one.</string>
+    <string name="drive_total_summary">%1$d accounts · %2$s of %3$s used</string>
+    <string name="drive_add_account">Add Google account</string>
+    <string name="drive_account_used">%1$s of %2$s used</string>
+    <string name="drive_remove_account">Remove</string>
+    <string name="drive_files_title">Stored items</string>
+    <string name="drive_files_empty">Nothing uploaded yet.</string>
+    <string name="drive_state_queued">Queued</string>
+    <string name="drive_state_uploading">Uploading</string>
+    <string name="drive_state_stored">Stored</string>
+    <string name="drive_state_failed">Upload failed</string>
+    <string name="drive_state_deleted">Deleted</string>
+    <string name="drive_action_restore">Restore</string>
+    <string name="drive_auto_upload">Upload finished files automatically</string>
 </resources>

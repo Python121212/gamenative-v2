@@ -62,13 +62,34 @@ jobs:
 
       - name: Build debug APK
         run: |
+          set -o pipefail
           case "${{ inputs.variant }}" in
             legacy) ./gradlew :app:assembleLegacyDebug ;;
             modern) ./gradlew :app:assembleModernDebug ;;
             legacyXr) ./gradlew :app:assembleLegacyXrDebug ;;
             modernXr) ./gradlew :app:assembleModernXrDebug ;;
             all) ./gradlew :app:assembleLegacyDebug :app:assembleModernDebug ;;
-          esac
+          esac 2>&1 | tee gradle-build.log
+
+      # Surface Kotlin/Gradle errors as check annotations so they can be read
+      # through the API even when the raw log download is unavailable.
+      - name: Report build errors
+        if: failure()
+        run: |
+          if [ ! -f gradle-build.log ]; then exit 0; fi
+          # Emit Kotlin/Gradle errors (with their continuation lines) as check
+          # annotations so they can be read through the API.
+          awk '/^e: /{n++} n>0 && n<=8 {print}' gradle-build.log | head -n 60 | \
+            while IFS= read -r line; do
+              escaped=$(printf '%s' "$line" | tr '%\r\n' '    ')
+              echo "::error::$escaped"
+            done
+          awk '/What went wrong\??:/{p=1;c=0} p&&c<25{print;c++}' gradle-build.log | \
+            while IFS= read -r line; do
+              escaped=$(printf '%s' "$line" | tr '%\r\n' '    ')
+              echo "::error::$escaped"
+            done
+          tail -n 40 gradle-build.log
 
       - name: List APKs
         run: find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
