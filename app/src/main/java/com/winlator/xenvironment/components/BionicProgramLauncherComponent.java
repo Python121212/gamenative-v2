@@ -461,7 +461,8 @@ public class BionicProgramLauncherComponent extends GuestProgramLauncherComponen
                 container,
                 envVars,
                 wineInfo != null && wineInfo.isArm64EC(),
-                container != null ? container.getDXWrapper() : null);
+                container != null ? container.getDXWrapper() : null,
+                imageFs.getShareDir().getPath());
 
         // Code-map capture (input for offline code caches, uploaded after exit) is decided here, after
         // every preset and container variable has been merged, so nothing can override the gate.

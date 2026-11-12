@@ -24,6 +24,7 @@ object TranslationStackApplier {
      * @param envVars 起動直前の環境変数（このオブジェクトを直接書き換える）
      * @param isArm64Ec wine が arm64ec かどうか（`xServerState.value.wineInfo.isArm64EC()`）
      * @param dxwrapperId 実際に適用された dxwrapper（`xserverState.value.dxwrapper` など。null なら container の値）
+     * @param shareDirPath imagefs の share ディレクトリ（ICD マニフェストの置き場所。null なら書き換えない）
      */
     @JvmStatic
     @JvmOverloads
@@ -32,11 +33,13 @@ object TranslationStackApplier {
         envVars: EnvVars,
         isArm64Ec: Boolean,
         dxwrapperId: String? = null,
+        shareDirPath: String? = null,
     ): TranslationStackPlan? {
         if (container == null) return null
         return try {
             val plan = TranslationStackResolver.resolve(inputsOf(container, envVars, isArm64Ec, dxwrapperId))
             removeDeadKeys(envVars, plan)
+            fixIcdEnv(envVars, plan, shareDirPath)
             logPlan(plan)
             plan
         } catch (error: Throwable) {
@@ -80,6 +83,16 @@ object TranslationStackApplier {
             ""
         }
 
+        var adrenotoolsTurnip = true
+        var adrenotoolsDriver = ""
+        try {
+            val driverConfig = KeyValueSet(container.getGraphicsDriverConfig())
+            adrenotoolsTurnip = driverConfig.get("adrenotoolsTurnip", "1") != "0"
+            adrenotoolsDriver = driverConfig.get("adrenotoolsDriver")
+        } catch (error: Throwable) {
+            Timber.tag(TAG).w(error, "graphicsDriverConfig を解析できませんでした")
+        }
+
         return TranslationStackInputs(
             containerVariant = container.getContainerVariant().orEmpty(),
             wineVersion = container.getWineVersion().orEmpty(),
@@ -90,12 +103,48 @@ object TranslationStackApplier {
             dxwrapper = dxwrapperId ?: container.getDXWrapper().orEmpty(),
             ddrawWrapper = ddrawWrapper,
             graphicsDriver = container.getGraphicsDriver().orEmpty(),
+            adrenotoolsTurnip = adrenotoolsTurnip,
+            adrenotoolsDriver = adrenotoolsDriver,
             env = env,
         )
     }
 
     private fun removeDeadKeys(envVars: EnvVars, plan: TranslationStackPlan) {
         plan.deadEnvKeys.forEach { key -> envVars.remove(key) }
+    }
+
+    /**
+     * Vulkan ローダに渡す ICD を 1 つに固定する。
+     *
+     * - アプリが管理しているマニフェスト（freedreno / vortek / wrapper）を指している場合だけ書き換える。
+     *   ゲームスコープ等のセッション固有 ICD には触らない。
+     * - 複数指定（`VK_ICD_FILENAMES` と `VK_DRIVER_FILES` の併用、`:` 区切りの複数）は 1 件に畳む。
+     */
+    private fun fixIcdEnv(envVars: EnvVars, plan: TranslationStackPlan, shareDirPath: String?) {
+        val expected = plan.expectedIcdManifest
+        if (expected != null) {
+            TranslationStackResolver.icdListKeys().forEach { key ->
+                if (!envVars.has(key)) return@forEach
+                val managed = TranslationStackResolver.icdListEntries(envVars.get(key))
+                    .firstOrNull { TranslationStackResolver.isManagedIcdManifest(it) } ?: return@forEach
+                val dir = managed.substringBeforeLast('/', "")
+                val targetDir = when {
+                    dir.endsWith("/vulkan/icd.d") -> dir
+                    !shareDirPath.isNullOrBlank() -> "$shareDirPath/vulkan/icd.d"
+                    else -> dir
+                }
+                val normalized = if (targetDir.isEmpty()) expected else "$targetDir/$expected"
+                if (normalized != envVars.get(key)) {
+                    Timber.tag(TAG).i("ICD を 1 つに固定: $key=${envVars.get(key)} → $normalized")
+                    envVars.put(key, normalized)
+                }
+            }
+        }
+        // ローダは両方を見るので、片方だけ残す（既存コードは VK_ICD_FILENAMES を使っている）。
+        if (envVars.has("VK_ICD_FILENAMES") && envVars.has("VK_DRIVER_FILES")) {
+            Timber.tag(TAG).i("ICD の指定が二重なので VK_DRIVER_FILES を削除（VK_ICD_FILENAMES に統一）")
+            envVars.remove("VK_DRIVER_FILES")
+        }
     }
 
     private fun logPlan(plan: TranslationStackPlan) {

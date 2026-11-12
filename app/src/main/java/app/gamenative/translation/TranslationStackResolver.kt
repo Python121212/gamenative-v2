@@ -25,6 +25,10 @@ data class TranslationStackInputs(
     val ddrawWrapper: String = "",
     /** `turnip` / `vortek` / `virgl` / `wrapper` / `adreno` / `sd-8-elite` など。 */
     val graphicsDriver: String = "",
+    /** graphicsDriverConfig の `adrenotoolsTurnip`（既定は true）。turnip を Adrenotools 経由で使うか。 */
+    val adrenotoolsTurnip: Boolean = true,
+    /** graphicsDriverConfig の `adrenotoolsDriver`（例: `vulkan.adreno.so`、`System`）。 */
+    val adrenotoolsDriver: String = "",
     /** 起動直前の環境変数（キー → 値）。 */
     val env: Map<String, String> = emptyMap(),
 )
@@ -53,6 +57,28 @@ object TranslationStackResolver {
 
     const val GFX_VULKAN = "vulkan"
     const val GFX_GL = "gl"
+
+    // GPU ドライバ（ICD）段。ローダに渡す実装は 1 つだけ。
+    const val ICD_TURNIP = "turnip-icd"
+    const val ICD_ADRENOTOOLS = "adrenotools-icd"
+    const val ICD_VORTEK = "vortek-icd"
+    const val ICD_VIRGL = "virgl-gl"
+
+    /** Vulkan ローダに渡す ICD マニフェスト。アプリが imagefs の share 配下で管理しているもの。 */
+    const val MANIFEST_FREEDRENO = "freedreno_icd.aarch64.json"
+    const val MANIFEST_VORTEK = "vortek_icd.aarch64.json"
+    const val MANIFEST_WRAPPER = "wrapper_icd.aarch64.json"
+
+    private val MANAGED_ICD_MANIFESTS = setOf(MANIFEST_FREEDRENO, MANIFEST_VORTEK, MANIFEST_WRAPPER)
+
+    /** Vulkan ローダに ICD を伝える環境変数（新しいローダは `VK_DRIVER_FILES` を優先する）。 */
+    private val ICD_LIST_KEYS = listOf("VK_ICD_FILENAMES", "VK_DRIVER_FILES")
+
+    // 各ドライバだけが読む環境変数。
+    private val TURNIP_PREFIXES = listOf("TU_")
+    private val ADRENOTOOLS_PREFIXES = listOf("ADRENOTOOLS_")
+    private val VORTEK_PREFIXES = listOf("VORTEK_")
+    private val VIRGL_PREFIXES = listOf("VIRGL_")
 
     /** FEXCore が読む環境変数。 */
     private val FEX_PREFIXES = listOf("FEX_")
@@ -244,12 +270,127 @@ object TranslationStackResolver {
             )
         }
 
+        // ------------------------------------------------------------ GPU_DRIVER 段
+        // Vulkan ローダが読み込む ICD は 1 つだけ。ドライバ設定から期待する ICD を決め、
+        // 別の ICD を指している環境変数・別ドライバ専用の環境変数を落とす。
+        val graphicsDriver = inputs.graphicsDriver.lowercase(Locale.ROOT)
+        val icd = resolveIcd(graphicsDriver, inputs.adrenotoolsTurnip)
+        layers += TranslationLayer(
+            stage = TranslationStage.GPU_DRIVER,
+            id = icd.id,
+            version = inputs.adrenotoolsDriver.ifBlank { inputs.graphicsDriver },
+        )
+
+        // 選ばれなかったドライバ専用の環境変数を除去する。
+        if (icd.id != ICD_TURNIP) dead += keysWithPrefix(env, TURNIP_PREFIXES)
+        if (icd.id != ICD_ADRENOTOOLS && icd.id != ICD_VORTEK) dead += keysWithPrefix(env, ADRENOTOOLS_PREFIXES)
+        if (icd.id != ICD_VORTEK) dead += keysWithPrefix(env, VORTEK_PREFIXES)
+        if (icd.id != ICD_VIRGL) dead += keysWithPrefix(env, VIRGL_PREFIXES)
+
+        val families = listOf(
+            ICD_TURNIP to keysWithPrefix(env, TURNIP_PREFIXES),
+            ICD_ADRENOTOOLS to keysWithPrefix(env, ADRENOTOOLS_PREFIXES),
+            ICD_VORTEK to keysWithPrefix(env, VORTEK_PREFIXES),
+            ICD_VIRGL to keysWithPrefix(env, VIRGL_PREFIXES),
+        ).filter { it.second.isNotEmpty() }
+        // vortek は Adrenotools のドライバ .so を読み込むので、この 2 つは同居してよい。
+        val liveFamilies = when (icd.id) {
+            ICD_TURNIP -> setOf(ICD_TURNIP)
+            ICD_VORTEK -> setOf(ICD_VORTEK, ICD_ADRENOTOOLS)
+            ICD_ADRENOTOOLS -> setOf(ICD_ADRENOTOOLS)
+            else -> setOf(ICD_VIRGL)
+        }
+        val livePresent = families.filter { it.first in liveFamilies }
+        val deadPresent = families.filter { it.first !in liveFamilies }
+        if (livePresent.isNotEmpty() && deadPresent.isNotEmpty()) {
+            conflicts += TranslationConflict(
+                stage = TranslationStage.GPU_DRIVER,
+                kind = "duplicate-gpu-driver-providers",
+                detail = "GPU ドライバが 2 系統以上設定されている（有効: ${icd.id} / 未使用: " +
+                    deadPresent.joinToString(", ") { it.first } + "）。未使用側の環境変数を除去する",
+                action = ConflictAction.ENV_STRIPPED,
+            )
+        }
+
+        // ICD を指す環境変数の中身を検査する（複数指定・別マニフェストの指定）。
+        val icdValues = ICD_LIST_KEYS.mapNotNull { key -> env[key]?.let { key to it } }
+        val managedEntries = icdValues.flatMap { (key, value) ->
+            splitIcdList(value).filter { basename(it) in MANAGED_ICD_MANIFESTS }.map { key to it }
+        }
+        if (icdValues.size > 1 || managedEntries.size > 1) {
+            conflicts += TranslationConflict(
+                stage = TranslationStage.GPU_DRIVER,
+                kind = "icd-manifest-duplicate",
+                detail = "Vulkan ローダに渡す ICD が複数指定されている（" +
+                    icdValues.joinToString(", ") { "${it.first}=${basename(it.second)}" } +
+                    "）。1 つに固定する",
+                action = ConflictAction.FIXED,
+            )
+        }
+        val expectedManifest = icd.manifest
+        val mismatched = managedEntries.filter { (_, value) -> basename(value) != expectedManifest }
+        if (expectedManifest != null && mismatched.isNotEmpty()) {
+            conflicts += TranslationConflict(
+                stage = TranslationStage.GPU_DRIVER,
+                kind = "icd-manifest-mismatch",
+                detail = "選択中の GPU ドライバ（${icd.id}）は $expectedManifest を使うが、" +
+                    "環境変数は ${mismatched.joinToString(", ") { basename(it.second) }} を指している",
+                action = ConflictAction.FIXED,
+            )
+        }
+        if (icd.id == ICD_VIRGL && icdValues.isNotEmpty()) {
+            conflicts += TranslationConflict(
+                stage = TranslationStage.GPU_DRIVER,
+                kind = "vulkan-icd-on-gl-driver",
+                detail = "グラフィックスドライバは GL 専用の virgl なのに、Vulkan の ICD が設定されている。" +
+                    "GL 経路では使われないが、ユーティリティが Vulkan を使う可能性があるため残す",
+                action = ConflictAction.REPORTED,
+            )
+        }
+
         return TranslationStackPlan(
             layers = layers,
             deadEnvKeys = dead.toList(),
             conflicts = conflicts,
+            expectedIcdManifest = expectedManifest,
         )
     }
+
+    /** GPU ドライバ設定から、この起動で唯一有効な ICD を決める。 */
+    private data class Icd(val id: String, val manifest: String?)
+
+    private fun resolveIcd(graphicsDriver: String, adrenotoolsTurnip: Boolean): Icd = when {
+        // virgl は virpipe（GL）で、Vulkan を受け取る先が無い。
+        graphicsDriver == "virgl" -> Icd(ICD_VIRGL, null)
+        // turnip 直結（Adrenotools 無効）は freedreno ICD をローダに直接渡す。
+        graphicsDriver == "turnip" && !adrenotoolsTurnip -> Icd(ICD_TURNIP, MANIFEST_FREEDRENO)
+        // vortek は in-process のレンダラ。GL 側は zink が Vulkan を使うため wrapper ICD が残る。
+        graphicsDriver == "vortek" || graphicsDriver == "adreno" || graphicsDriver == "sd-8-elite" ->
+            Icd(ICD_VORTEK, MANIFEST_WRAPPER)
+        // wrapper（Adrenotools）: wrapper ICD がドライバ .so を吊る。
+        else -> Icd(ICD_ADRENOTOOLS, MANIFEST_WRAPPER)
+    }
+
+    private fun splitIcdList(value: String): List<String> =
+        value.split(':', ',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    private fun basename(path: String): String = path.substringAfterLast('/').substringAfterLast('\\')
+
+    // ------------------------------------------------------------------
+    // 適用側（TranslationStackApplier）が ICD を 1 つに固定するための小さなヘルパ。
+    // ------------------------------------------------------------------
+
+    /** アプリが imagefs の share 配下で管理している ICD マニフェストか。 */
+    fun isManagedIcdManifest(pathOrName: String): Boolean = basename(pathOrName) in MANAGED_ICD_MANIFESTS
+
+    /** `A:B` / `A,B`（ローダは複数指定を受け付ける）を 1 件ずつに分ける。 */
+    fun icdListEntries(value: String): List<String> = splitIcdList(value)
+
+    /** パスからファイル名だけを取り出す。 */
+    fun icdManifestBasename(path: String): String = basename(path)
+
+    /** Vulkan ローダに ICD を伝える環境変数（新しいローダは `VK_DRIVER_FILES` を優先する）。 */
+    fun icdListKeys(): List<String> = ICD_LIST_KEYS
 
     private fun keysWithPrefix(env: Map<String, String>, prefixes: List<String>): List<String> =
         env.keys.filter { key -> prefixes.any { key.startsWith(it) } }.sorted()

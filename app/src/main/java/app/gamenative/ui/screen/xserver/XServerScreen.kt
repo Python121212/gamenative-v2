@@ -4738,6 +4738,7 @@ private fun setupXEnvironment(
         envVars = envVars,
         isArm64Ec = runCatching { xServerState.value.wineInfo.isArm64EC() }.getOrDefault(false),
         dxwrapperId = xServerState.value.dxwrapper,
+        shareDirPath = runCatching { imageFs.getShareDir().path }.getOrNull(),
     )
 
     guestProgramLauncherComponent.envVars = EnvVars().apply { putAll(envVars) }

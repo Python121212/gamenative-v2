@@ -3,6 +3,7 @@ package app.gamenative.translation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -19,6 +20,8 @@ class TranslationStackResolverTest {
         dxwrapper: String = "dxvk-2.7.1",
         ddrawWrapper: String = "none",
         graphicsDriver: String = "turnip",
+        adrenotoolsTurnip: Boolean = true,
+        adrenotoolsDriver: String = "",
         env: Map<String, String> = emptyMap(),
     ) = TranslationStackInputs(
         containerVariant = containerVariant,
@@ -30,6 +33,8 @@ class TranslationStackResolverTest {
         dxwrapper = dxwrapper,
         ddrawWrapper = ddrawWrapper,
         graphicsDriver = graphicsDriver,
+        adrenotoolsTurnip = adrenotoolsTurnip,
+        adrenotoolsDriver = adrenotoolsDriver,
         env = env,
     )
 
@@ -277,10 +282,153 @@ class TranslationStackResolverTest {
                     assertNotNull(plan.layer(TranslationStage.CPU))
                     assertNotNull(plan.layer(TranslationStage.WINDOWS))
                     assertNotNull(plan.layer(TranslationStage.GRAPHICS_API))
-                    assertTrue(plan.hopCount in 3..4)
+                    assertNotNull(plan.layer(TranslationStage.GPU_DRIVER))
+                    assertTrue(plan.hopCount in 4..5)
                 }
             }
         }
+    }
+
+
+    // ------------------------------------------------------------ GPU_DRIVER 段
+
+    @Test
+    fun `turnip を Adrenotools 無効で使うなら freedreno ICD を 1 つだけ渡す`() {
+        val plan = TranslationStackResolver.resolve(
+            inputs(
+                graphicsDriver = "turnip",
+                adrenotoolsTurnip = false,
+                env = mapOf(
+                    "TU_DEBUG" to "sysmem",
+                    "TU_OVERRIDE_HEAP_SIZE" to "4096",
+                    "ADRENOTOOLS_DRIVER_NAME" to "vulkan.adreno.so",
+                ),
+            ),
+        )
+
+        assertEquals("turnip-icd", plan.layer(TranslationStage.GPU_DRIVER)?.id)
+        assertEquals(
+            TranslationStackResolver.MANIFEST_FREEDRENO,
+            plan.expectedIcdManifest,
+        )
+        // Adrenotools は使わないので、その設定は死んでいる
+        assertEquals(listOf("ADRENOTOOLS_DRIVER_NAME"), plan.deadEnvKeys)
+    }
+
+    @Test
+    fun `turnip を Adrenotools 経由で使うなら wrapper ICD になり TU_ は落ちる`() {
+        val plan = TranslationStackResolver.resolve(
+            inputs(
+                graphicsDriver = "turnip",
+                adrenotoolsTurnip = true,
+                adrenotoolsDriver = "vulkan.adreno.so",
+                env = mapOf(
+                    "TU_DEBUG" to "sysmem",
+                    "ADRENOTOOLS_DRIVER_NAME" to "vulkan.adreno.so",
+                    "ADRENOTOOLS_DRIVER_PATH" to "/data/adrenotools/v762",
+                ),
+            ),
+        )
+
+        assertEquals("adrenotools-icd", plan.layer(TranslationStage.GPU_DRIVER)?.id)
+        assertEquals(TranslationStackResolver.MANIFEST_WRAPPER, plan.expectedIcdManifest)
+        assertEquals(listOf("TU_DEBUG"), plan.deadEnvKeys)
+        assertTrue(plan.conflicts.any { it.kind == "duplicate-gpu-driver-providers" })
+    }
+
+    @Test
+    fun `vortek は Adrenotools と同居できるが turnip の設定は落とす`() {
+        val plan = TranslationStackResolver.resolve(
+            inputs(
+                graphicsDriver = "vortek",
+                env = mapOf(
+                    "VORTEK_SERVER_PATH" to "/data/tmp/.vortek",
+                    "ADRENOTOOLS_DRIVER_NAME" to "vulkan.adreno.so",
+                    "TU_DEBUG" to "sysmem",
+                    "VIRGL_NO_READBACK" to "true",
+                ),
+            ),
+        )
+
+        assertEquals("vortek-icd", plan.layer(TranslationStage.GPU_DRIVER)?.id)
+        assertEquals(listOf("TU_DEBUG", "VIRGL_NO_READBACK"), plan.deadEnvKeys)
+        // vortek は Adrenotools のドライバを読み込むので、その 2 系統は同居してよい。
+        // ただし turnip/virgl の設定が残っていれば「別ドライバの残骸」として記録する。
+        val conflict = plan.conflicts.firstOrNull { it.kind == "duplicate-gpu-driver-providers" }
+        assertNotNull(conflict)
+        assertTrue(conflict!!.detail.contains("vortek-icd"))
+    }
+
+    @Test
+    fun `virgl は Vulkan を使わないので ICD は null で Vulkan 系の設定は落とす`() {
+        val plan = TranslationStackResolver.resolve(
+            inputs(
+                dxwrapper = "wined3d",
+                graphicsDriver = "virgl",
+                env = mapOf(
+                    "VIRGL_SERVER_PATH" to "/data/virgl",
+                    "TU_DEBUG" to "sysmem",
+                    "ADRENOTOOLS_DRIVER_NAME" to "vulkan.adreno.so",
+                    "VK_ICD_FILENAMES" to "/data/share/vulkan/icd.d/wrapper_icd.aarch64.json",
+                ),
+            ),
+        )
+
+        assertEquals("virgl-gl", plan.layer(TranslationStage.GPU_DRIVER)?.id)
+        assertNull(plan.expectedIcdManifest)
+        assertEquals(listOf("TU_DEBUG", "ADRENOTOOLS_DRIVER_NAME"), plan.deadEnvKeys)
+        // Vulkan の ICD は残す（ユーティリティが使う可能性がある）が、記録はする
+        assertTrue(plan.conflicts.any { it.kind == "vulkan-icd-on-gl-driver" })
+    }
+
+    @Test
+    fun `選んだドライバと別の ICD を指していたら固定対象として記録する`() {
+        val plan = TranslationStackResolver.resolve(
+            inputs(
+                graphicsDriver = "turnip",
+                adrenotoolsTurnip = true,
+                env = mapOf(
+                    "VK_ICD_FILENAMES" to "/data/share/vulkan/icd.d/freedreno_icd.aarch64.json",
+                ),
+            ),
+        )
+
+        assertEquals(TranslationStackResolver.MANIFEST_WRAPPER, plan.expectedIcdManifest)
+        val conflict = plan.conflicts.firstOrNull { it.kind == "icd-manifest-mismatch" }
+        assertNotNull(conflict)
+        assertEquals(ConflictAction.FIXED, conflict?.action)
+    }
+
+    @Test
+    fun `ICD の指定が二重なら 1 つに畳む対象として記録する`() {
+        val plan = TranslationStackResolver.resolve(
+            inputs(
+                graphicsDriver = "turnip",
+                env = mapOf(
+                    "VK_ICD_FILENAMES" to "/data/share/vulkan/icd.d/wrapper_icd.aarch64.json",
+                    "VK_DRIVER_FILES" to "/data/share/vulkan/icd.d/wrapper_icd.aarch64.json",
+                ),
+            ),
+        )
+
+        val conflict = plan.conflicts.firstOrNull { it.kind == "icd-manifest-duplicate" }
+        assertNotNull(conflict)
+        assertEquals(ConflictAction.FIXED, conflict?.action)
+    }
+
+    @Test
+    fun `アプリ管理外のセッション ICD は書き換え対象にしない`() {
+        val plan = TranslationStackResolver.resolve(
+            inputs(
+                graphicsDriver = "turnip",
+                env = mapOf(
+                    "VK_ICD_FILENAMES" to "/data/user/0/app.gamenative/files/gamescope/share/vulkan/icd.d/adrenotools_gamescope.aarch64.json",
+                ),
+            ),
+        )
+
+        assertTrue(plan.conflicts.none { it.kind == "icd-manifest-mismatch" })
+        assertTrue(plan.conflicts.none { it.kind == "icd-manifest-duplicate" })
     }
 
     @Test

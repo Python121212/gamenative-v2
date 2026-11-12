@@ -7,7 +7,8 @@ package app.gamenative.translation
  * x86-64 実行ファイル → [CPU] → AArch64 ネイティブ
  * Win32 API          → [WINDOWS] → Linux (Android)
  * Direct3D 8〜12     → [DIRECT3D] → Vulkan または OpenGL
- * グラフィックス API  → [GRAPHICS_API] → GPU ドライバ（Vulkan ICD / GLES）
+ * グラフィックス API  → [GRAPHICS_API] → Vulkan または GL
+ * Vulkan             → [GPU_DRIVER] → GPU ドライバ（ICD は 1 つだけ）
  * ```
  *
  * 各段で有効なレイヤーは **ちょうど 1 つ**でなければならない（[TranslationStackPlan.isSingleLayerPerStage]）。
@@ -24,8 +25,14 @@ enum class TranslationStage(val label: String, val japaneseName: String) {
     /** Direct3D → Vulkan/OpenGL の描画翻訳（DXVK / VKD3D / wined3d / cnc-ddraw）。 */
     DIRECT3D("d3d", "Direct3D 翻訳"),
 
-    /** グラフィックス API → GPU ドライバ（Turnip/Vortek などの Vulkan ICD、GLES 直結）。 */
+    /** グラフィックス API → Vulkan ローダに渡す実装（Vulkan か GL か）。 */
     GRAPHICS_API("gfx", "グラフィックス API"),
+
+    /**
+     * Vulkan → GPU ドライバ。ローダが読み込む ICD（Installable Client Driver）は **1 つだけ**でなければならない。
+     * Turnip（freedreno ICD）／Adrenotools（wrapper ICD）／Vortek（in-process）／Virgl（Vulkan なし）のどれか 1 つ。
+     */
+    GPU_DRIVER("icd", "GPU ドライバ (ICD)"),
 }
 
 /** ある段で実際に有効な翻訳レイヤー。 */
@@ -72,6 +79,11 @@ data class TranslationStackPlan(
     val layers: List<TranslationLayer>,
     val deadEnvKeys: List<String>,
     val conflicts: List<TranslationConflict>,
+    /**
+     * この起動で Vulkan ローダに渡すべき ICD マニフェストのファイル名（例: `wrapper_icd.aarch64.json`）。
+     * `null` は「Vulkan を経由しない（Virgl の GL 直結）」または「セッション固有の ICD をそのまま使う」。
+     */
+    val expectedIcdManifest: String? = null,
 ) {
     fun layer(stage: TranslationStage): TranslationLayer? = layers.firstOrNull { it.stage == stage }
 
@@ -97,7 +109,8 @@ data class TranslationStackPlan(
         val win = layer(TranslationStage.WINDOWS)?.label ?: "none"
         val d3d = layersOf(TranslationStage.DIRECT3D).joinToString("/") { it.label }.ifEmpty { "none" }
         val gfx = layer(TranslationStage.GRAPHICS_API)?.label ?: "none"
-        return "x86-64 → $cpu → aarch64 ; win32 → $win ; d3d → $d3d → $gfx"
+        val icd = layer(TranslationStage.GPU_DRIVER)?.label ?: "none"
+        return "x86-64 → $cpu → aarch64 ; win32 → $win ; d3d → $d3d → $gfx → $icd"
     }
 
     /** ログ・デバッグ画面用の 1 行サマリ。 */
