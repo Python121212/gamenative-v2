@@ -221,6 +221,14 @@ android {
             excludes += "/junit/runner/smalllogo.gif"
             excludes += "/junit/runner/logo.gif"
             excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+            // Google Drive pseudo-SSD pulls multiple google-auth-library jars
+            // that ship the same service index / license files.
+            excludes += "/META-INF/INDEX.LIST"
+            excludes += "/META-INF/DEPENDENCIES"
+            excludes += "/META-INF/LICENSE"
+            excludes += "/META-INF/LICENSE.txt"
+            excludes += "/META-INF/NOTICE"
+            excludes += "/META-INF/NOTICE.txt"
         }
         jniLibs {
             // 'extractNativeLibs' was not enough to keep the jniLibs and
