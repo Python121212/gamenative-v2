@@ -107,7 +107,10 @@ jobs:
       # or in the diagnosis rules fails here (both run offline, no network).
       - name: Unit tests (translation stack + AI diagnosis)
         if: inputs.variant == 'legacy'
-        run: ./gradlew :app:compileLegacyDebugUnitTestKotlin :app:testLegacyDebugUnitTest --tests "app.gamenative.translation.*" --tests "app.gamenative.aidiag.*"
+        run: |
+          set -o pipefail
+          ./gradlew :app:compileLegacyDebugUnitTestKotlin :app:testLegacyDebugUnitTest \
+            --tests "app.gamenative.translation.*" --tests "app.gamenative.aidiag.*" 2>&1 | tee gradle-tests.log
 
       # Surface Kotlin/Gradle errors as check annotations so they can be read
       # through the API even when the raw log download is unavailable.
@@ -117,21 +120,18 @@ jobs:
         run: |
           emit() { printf '::error::%s\n' "$(printf '%s' "$1" | tr '%\r\n' '    ')"; }
           emit "HEAD=$(git rev-parse --short HEAD) $(git log -1 --format=%s)"
-          if [ -f gradle-build.log ]; then
-            echo "log lines: $(wc -l < gradle-build.log)"
-            # Kotlin errors first (`e: …`); they are the most actionable and there is a
-            # hard limit of ~10 annotations per step. Fall back to javac/Gradle messages.
-            for PATTERN in '^e: ' 'error:' 'Execution failed for task|What went wrong|Caused by:|Java heap space'; do
-              if grep -qE "$PATTERN" gradle-build.log; then
-                grep -nE "$PATTERN" gradle-build.log | head -n 10 | while IFS= read -r line; do emit "$line"; done
-                exit 0
-              fi
+          # Kotlin (`e: file://…`), javac, JUnit and Gradle failure lines, in that order.
+          # GitHub allows ~10 annotations per step, so stop at nine.
+          {
+            for LOG in gradle-tests.log gradle-build.log; do
+              [ -f "$LOG" ] || continue
+              grep -nE '^e: |error:| FAILED|ComparisonFailure|AssertionError|expected:<|What went wrong|Execution failed for task|Caused by:' "$LOG" \
+                | sed "s|^|$LOG:|" | cut -c1-350
             done
-            # Nothing matched: the last lines still show which task failed.
-            tail -n 10 gradle-build.log | while IFS= read -r line; do emit "TAIL| $line"; done
-          else
-            emit "gradle-build.log が見つかりません"
-          fi
+          } | head -n 9 | while IFS= read -r line; do emit "$line"; done
+          for LOG in gradle-tests.log gradle-build.log; do
+            [ -f "$LOG" ] && echo "$LOG: $(wc -l < "$LOG") lines"
+          done
 
       - name: List APKs
         run: find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
