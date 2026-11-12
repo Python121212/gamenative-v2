@@ -1,0 +1,966 @@
+package app.gamenative.service.gog.api
+
+import app.gamenative.service.gog.GOGConstants
+import java.io.ByteArrayOutputStream
+import java.util.zip.Deflater
+import java.util.zip.GZIPOutputStream
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+
+/**
+ * Comprehensive tests for GOGManifestParser
+ * Uses real data classes and JSON parsing
+ */
+@RunWith(RobolectricTestRunner::class)
+class GOGManifestParserTest {
+    private lateinit var parser: GOGManifestParser
+
+    @Before
+    fun setUp() {
+        parser = GOGManifestParser()
+    }
+
+
+    // Functions to create dependency items
+    private fun createTestChunk(
+        md5: String = "aabbccdd11223344",
+        size: Long = 1000L,
+        compressedSize: Long? = 500L,
+    ) = FileChunk(
+        compressedMd5 = md5,
+        size = size,
+        compressedSize = compressedSize,
+        md5 = md5,
+    )
+
+    private fun createTestDepotFile(
+        path: String = "game.exe",
+        productId: String? = null,
+        chunks: List<FileChunk> = listOf(createTestChunk()),
+        flags: List<String> = emptyList(),
+    ) = DepotFile(
+        path = path,
+        productId = productId,
+        chunks = chunks,
+        md5 = null,
+        sha256 = null,
+        flags = flags,
+    )
+
+    private fun createTestDepot(
+        languages: List<String> = listOf("en-US"),
+        manifest: String = "depot_manifest_url",
+    ) = Depot(
+        languages = languages,
+        size = 1000000,
+        manifest = manifest,
+        productId = "1",
+        compressedSize = 5,
+        osBitness = emptyList(),
+    )
+
+    private fun createTestProduct(productId: String = "12345") = Product(
+        productId = productId,
+        name = "Test Game",
+    )
+
+    private fun createTestBuild(
+        buildId: String = "build123",
+        generation: Int = 2,
+    ) = GOGBuild(
+        buildId = buildId,
+        productId = "12345",
+        platform = "windows",
+        generation = generation,
+        versionName = "1.0.0",
+        branch = "master",
+        link = "https://cdn.gog.com/manifest",
+        legacyBuildId = null,
+    )
+
+
+
+    // Tests here
+
+    @Test
+    fun testSelectBuild_returnsGen2Build() {
+        val gen1 = createTestBuild(buildId = "old", generation = 1)
+        val gen2 = createTestBuild(buildId = "new", generation = 2)
+        val builds = listOf(gen1, gen2)
+
+        val result = parser.selectBuild(builds)
+
+        assertNotNull(result)
+        assertEquals(2, result?.generation)
+        assertEquals("new", result?.buildId)
+    }
+
+    @Test
+    fun testSelectBuild_returnsNullWhenEmpty() {
+        val result = parser.selectBuild(emptyList())
+        assertNull(result)
+    }
+
+    @Test
+    fun testSelectBuild_returnsNullWhenNoGen2() {
+        val gen1Only = listOf(createTestBuild(generation = 1))
+        val result = parser.selectBuild(gen1Only, preferredGeneration = 2)
+        assertNull(result)
+    }
+
+    @Test
+    fun testSelectBuild_returnsGen1WhenRequested() {
+        val gen1Only = listOf(createTestBuild(buildId = "legacy", generation = 1))
+        val result = parser.selectBuild(gen1Only, preferredGeneration = 1)
+        assertNotNull(result)
+        assertEquals(1, result?.generation)
+        assertEquals("legacy", result?.buildId)
+    }
+
+    @Test
+    fun testFilterDepotsByLanguage() {
+        val enDepot = createTestDepot(languages = listOf("en"))
+        val frDepot = createTestDepot(languages = listOf("fr"))
+        val manifest = GOGManifestMeta(
+            baseProductId = "12345",
+            installDirectory = "game",
+            depots = listOf(enDepot, frDepot),
+            dependencies = emptyList(),
+            products = emptyList(),
+        )
+
+        val (depots, effectiveLang) = parser.filterDepotsByLanguage(manifest, "english")
+
+        assertEquals(1, depots.size)
+        assertTrue(depots[0].languages.contains("en"))
+        assertTrue(effectiveLang in GOGConstants.CONTAINER_LANGUAGE_TO_GOG_CODES.getValue(GOGConstants.GOG_FALLBACK_DOWNLOAD_LANGUAGE))
+    }
+
+    @Test
+    fun testFilterDepotsByLanguage_enUSMatchesEn() {
+        // Container language "english" resolves to en-US, en; games using en-US in manifest should match
+        val enUSDepot = createTestDepot(languages = listOf("en-US"))
+        val frDepot = createTestDepot(languages = listOf("fr"))
+        val manifest = GOGManifestMeta(
+            baseProductId = "12345",
+            installDirectory = "game",
+            depots = listOf(enUSDepot, frDepot),
+            dependencies = emptyList(),
+            products = emptyList(),
+        )
+
+        val (depots, effectiveLang) = parser.filterDepotsByLanguage(manifest, "english")
+
+        assertEquals(1, depots.size)
+        assertTrue(depots[0].languages.contains("en-US"))
+        assertTrue(effectiveLang in GOGConstants.CONTAINER_LANGUAGE_TO_GOG_CODES.getValue(GOGConstants.GOG_FALLBACK_DOWNLOAD_LANGUAGE))
+    }
+
+    @Test
+    fun testFilterDepotsByLanguage_fallbackToEnglishWhenRequestedLanguageHasNoDepots() {
+        val enUSDepot = createTestDepot(languages = listOf("en-US"))
+        val manifest = GOGManifestMeta(
+            baseProductId = "12345",
+            installDirectory = "game",
+            depots = listOf(enUSDepot),
+            dependencies = emptyList(),
+            products = emptyList(),
+        )
+
+        val (depots, effectiveLang) = parser.filterDepotsByLanguage(manifest, "greek")
+
+        assertEquals(1, depots.size)
+        assertTrue(depots[0].languages.contains("en-US"))
+        assertTrue(effectiveLang in GOGConstants.CONTAINER_LANGUAGE_TO_GOG_CODES.getValue(GOGConstants.GOG_FALLBACK_DOWNLOAD_LANGUAGE))
+    }
+
+    @Test
+    fun filterDepotsForInstall_keepsBaseAndSelectedOwnedDlcs() {
+        val base = createTestDepot().copy(productId = "100", manifest = "base")
+        val selectedOwned = createTestDepot().copy(productId = "200", manifest = "dlc-owned")
+        val selectedUnowned = createTestDepot().copy(productId = "300", manifest = "dlc-unowned")
+        val notSelected = createTestDepot().copy(productId = "400", manifest = "dlc-not-selected")
+
+        val depots = listOf(base, selectedOwned, selectedUnowned, notSelected)
+        val result = parser.filterDepotsForInstall(
+            languageDepots = depots,
+            allDepots = depots,
+            baseProductIds = setOf("100"),
+            dlcIds = setOf("200", "300"),
+            ownedProductIds = setOf("100", "200", "400"),
+        )
+
+        assertEquals(listOf("base", "dlc-owned"), result.map { it.manifest })
+    }
+
+    @Test
+    fun filterDepotsForInstall_emptySelectionIsBaseOnly() {
+        val base = createTestDepot().copy(productId = "100", manifest = "base")
+        val baseSecond = createTestDepot().copy(productId = "100", manifest = "base-2")
+        val ownedDlc = createTestDepot().copy(productId = "200", manifest = "dlc")
+
+        val depots = listOf(base, ownedDlc, baseSecond)
+        val result = parser.filterDepotsForInstall(
+            languageDepots = depots,
+            allDepots = depots,
+            baseProductIds = setOf("100"),
+            dlcIds = emptySet(),
+            ownedProductIds = setOf("100", "200"),
+        )
+
+        assertEquals(listOf("base", "base-2"), result.map { it.manifest })
+    }
+
+    @Test
+    fun filterDepotsForInstall_neverIncludesUnownedProducts() {
+        val base = createTestDepot().copy(productId = "100", manifest = "base")
+        val dlc = createTestDepot().copy(productId = "200", manifest = "dlc")
+
+        val depots = listOf(base, dlc)
+        val result = parser.filterDepotsForInstall(
+            languageDepots = depots,
+            allDepots = depots,
+            baseProductIds = setOf("100"),
+            dlcIds = setOf("200"),
+            ownedProductIds = emptySet(),
+        )
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun filterDepotsForInstall_selectedDlcWithoutLanguageDepotsFallsBackToEnglish() {
+        val base = createTestDepot(languages = listOf("de-DE"), manifest = "base-de").copy(productId = "100")
+        val dlcEnglish = createTestDepot(languages = listOf("en-US"), manifest = "dlc-en").copy(productId = "200")
+        val dlcFrench = createTestDepot(languages = listOf("fr-FR"), manifest = "dlc-fr").copy(productId = "200")
+        val baseEnglish = createTestDepot(languages = listOf("en-US"), manifest = "base-en").copy(productId = "100")
+
+        val result = parser.filterDepotsForInstall(
+            languageDepots = listOf(base),
+            allDepots = listOf(base, baseEnglish, dlcEnglish, dlcFrench),
+            baseProductIds = setOf("100"),
+            dlcIds = setOf("200"),
+            ownedProductIds = setOf("100", "200"),
+        )
+
+        assertEquals(listOf("base-de", "dlc-en"), result.map { it.manifest })
+    }
+
+    @Test
+    fun filterDepotsForInstall_selectedDlcWithoutEnglishDepotsTakesAllOfItsDepots() {
+        val base = createTestDepot(languages = listOf("en-US"), manifest = "base").copy(productId = "100")
+        val baseGerman = createTestDepot(languages = listOf("de-DE"), manifest = "base-de").copy(productId = "100")
+        val dlcGerman = createTestDepot(languages = listOf("de-DE"), manifest = "dlc-de").copy(productId = "200")
+        val dlcFrench = createTestDepot(languages = listOf("fr-FR"), manifest = "dlc-fr").copy(productId = "200")
+
+        val result = parser.filterDepotsForInstall(
+            languageDepots = listOf(base),
+            allDepots = listOf(base, baseGerman, dlcGerman, dlcFrench),
+            baseProductIds = setOf("100"),
+            dlcIds = setOf("200"),
+            ownedProductIds = setOf("100", "200"),
+        )
+
+        assertEquals(listOf("base", "dlc-de", "dlc-fr"), result.map { it.manifest })
+    }
+
+    @Test
+    fun dlcDepotsWithFallback_prefersLanguageDepots() {
+        val dlcGerman = createTestDepot(languages = listOf("de-DE"), manifest = "dlc-de").copy(productId = "200")
+        val dlcEnglish = createTestDepot(languages = listOf("en-US"), manifest = "dlc-en").copy(productId = "200")
+
+        val result = parser.dlcDepotsWithFallback(listOf(dlcGerman), listOf(dlcGerman, dlcEnglish), "200")
+
+        assertEquals(listOf("dlc-de"), result.map { it.manifest })
+    }
+
+    @Test
+    fun dlcDepotsWithFallback_starOnlyInLanguageAddsEnglishDepots() {
+        val dlcStar = createTestDepot(languages = listOf("*"), manifest = "dlc-star").copy(productId = "200")
+        val dlcEnglish = createTestDepot(languages = listOf("en-US"), manifest = "dlc-en").copy(productId = "200")
+
+        val result = parser.dlcDepotsWithFallback(listOf(dlcStar), listOf(dlcStar, dlcEnglish), "200")
+
+        assertEquals(listOf("dlc-star", "dlc-en"), result.map { it.manifest })
+    }
+
+    @Test
+    fun dlcDepotsWithFallback_starDepotListingAnotherLocaleStillAddsEnglishDepots() {
+        val dlcStarFrench = createTestDepot(languages = listOf("*", "fr-FR"), manifest = "dlc-star-fr").copy(productId = "200")
+        val dlcEnglish = createTestDepot(languages = listOf("en-US"), manifest = "dlc-en").copy(productId = "200")
+
+        val result = parser.dlcDepotsWithFallback(listOf(dlcStarFrench), listOf(dlcStarFrench, dlcEnglish), "200")
+
+        assertEquals(listOf("dlc-star-fr", "dlc-en"), result.map { it.manifest })
+    }
+
+    @Test
+    fun dlcDepotsWithFallback_starOnlyDlcKeepsItsStarDepots() {
+        val dlcStar = createTestDepot(languages = listOf("*"), manifest = "dlc-star").copy(productId = "200")
+
+        val result = parser.dlcDepotsWithFallback(listOf(dlcStar), listOf(dlcStar), "200")
+
+        assertEquals(listOf("dlc-star"), result.map { it.manifest })
+    }
+
+    @Test
+    fun filterDepotsForInstall_germanContainerGetsStarAndEnglishDepotsOfDlc() {
+        val baseGerman = createTestDepot(languages = listOf("de-DE"), manifest = "base-de").copy(productId = "100")
+        val dlcStar = createTestDepot(languages = listOf("*"), manifest = "dlc-star").copy(productId = "200")
+        val dlcEnglish = createTestDepot(languages = listOf("en-US"), manifest = "dlc-en").copy(productId = "200")
+
+        val result = parser.filterDepotsForInstall(
+            languageDepots = listOf(baseGerman, dlcStar),
+            allDepots = listOf(baseGerman, dlcStar, dlcEnglish),
+            baseProductIds = setOf("100"),
+            dlcIds = setOf("200"),
+            ownedProductIds = setOf("100", "200"),
+        )
+
+        assertEquals(listOf("base-de", "dlc-star", "dlc-en"), result.map { it.manifest })
+    }
+
+    @Test
+    fun filterDepotsForInstall_languageMatchingOnlyDlcFallsBackToEnglishForBase() {
+        val baseStar = createTestDepot(languages = listOf("*"), manifest = "base-star").copy(productId = "100")
+        val baseEnglish = createTestDepot(languages = listOf("en-US"), manifest = "base-en").copy(productId = "100")
+        val baseFrench = createTestDepot(languages = listOf("fr-FR"), manifest = "base-fr").copy(productId = "100")
+        val dlcGerman = createTestDepot(languages = listOf("de-DE"), manifest = "dlc-de").copy(productId = "200")
+
+        val result = parser.filterDepotsForInstall(
+            languageDepots = listOf(dlcGerman, baseStar),
+            allDepots = listOf(baseStar, baseEnglish, baseFrench, dlcGerman),
+            baseProductIds = setOf("100"),
+            dlcIds = setOf("200"),
+            ownedProductIds = setOf("100", "200"),
+        )
+
+        assertEquals(listOf("dlc-de", "base-star", "base-en"), result.map { it.manifest })
+    }
+
+    @Test
+    fun filterDepotsForInstall_keepsDepotsOfEitherBaseId() {
+        val baseProduct = createTestDepot(manifest = "base-product").copy(productId = "100")
+        val gameProduct = createTestDepot(manifest = "game-product").copy(productId = "101")
+
+        val depots = listOf(baseProduct, gameProduct)
+        val result = parser.filterDepotsForInstall(
+            languageDepots = depots,
+            allDepots = depots,
+            baseProductIds = setOf("100", "101"),
+            dlcIds = emptySet(),
+            ownedProductIds = setOf("100", "101"),
+        )
+
+        assertEquals(listOf("base-product", "game-product"), result.map { it.manifest })
+    }
+
+    @Test
+    fun testSeparateBaseDLC() {
+        val baseFile = createTestDepotFile(path = "base.exe", productId = null)
+        val dlcFile = createTestDepotFile(path = "dlc.dat", productId = "dlc_123")
+        val files = listOf(baseFile, dlcFile)
+
+        val (base, dlc) = parser.separateBaseDLC(files, "12345")
+
+        assertEquals(1, base.size)
+        assertEquals(1, dlc.size)
+        assertEquals("base.exe", base[0].path)
+        assertEquals("dlc.dat", dlc[0].path)
+    }
+
+    @Test
+    fun testSeparateSupportFiles() {
+        val gameFile = createTestDepotFile(path = "game.exe", flags = emptyList())
+        val supportFile = createTestDepotFile(path = "__support/redist/vcredist.exe", flags = listOf("support"))
+        val files = listOf(gameFile, supportFile)
+
+        val (game, support) = parser.separateSupportFiles(files)
+
+        assertEquals(1, game.size)
+        assertEquals(1, support.size)
+        assertEquals("__support/redist/vcredist.exe", support[0].path)
+        assertTrue(support[0].flags.contains("support"))
+    }
+
+    @Test
+    fun testCalculateTotalSize_usesCompressedSize() {
+        val chunk1 = createTestChunk(size = 1000, compressedSize = 500)
+        val chunk2 = createTestChunk(size = 2000, compressedSize = 800)
+        val file = createTestDepotFile(chunks = listOf(chunk1, chunk2))
+
+        val result = parser.calculateTotalSize(listOf(file))
+
+        assertEquals(1300L, result) // 500 + 800
+    }
+
+    @Test
+    fun testCalculateTotalSize_fallsBackToSizeWhenNoCompression() {
+        val chunk = createTestChunk(size = 1000, compressedSize = null)
+        val file = createTestDepotFile(chunks = listOf(chunk))
+
+        val result = parser.calculateTotalSize(listOf(file))
+
+        assertEquals(1000L, result)
+    }
+
+    @Test
+    fun testCalculateUncompressedSize() {
+        val chunk1 = createTestChunk(size = 1000, compressedSize = 500)
+        val chunk2 = createTestChunk(size = 2000, compressedSize = 800)
+        val file = createTestDepotFile(chunks = listOf(chunk1, chunk2))
+
+        val result = parser.calculateUncompressedSize(listOf(file))
+
+        assertEquals(3000L, result) // 1000 + 2000
+    }
+
+    @Test
+    fun testFindDLCProducts() {
+        val baseProduct = createTestProduct("12345")
+        val dlcProduct = createTestProduct("67890")
+        val manifest = GOGManifestMeta(
+            baseProductId = "12345",
+            installDirectory = "game",
+            depots = emptyList(),
+            dependencies = emptyList(),
+            products = listOf(baseProduct, dlcProduct),
+        )
+
+        val result = parser.findDLCProducts(manifest)
+
+        assertEquals(1, result.size)
+        assertEquals("67890", result[0].productId)
+    }
+
+    @Test
+    fun testHasDLC_true() {
+        val manifest = GOGManifestMeta(
+            baseProductId = "12345",
+            installDirectory = "game",
+            depots = emptyList(),
+            dependencies = emptyList(),
+            products = listOf(createTestProduct("12345"), createTestProduct("dlc")),
+        )
+
+        assertTrue(parser.hasDLC(manifest))
+    }
+
+    @Test
+    fun testHasDLC_false() {
+        val manifest = GOGManifestMeta(
+            baseProductId = "12345",
+            installDirectory = "game",
+            depots = emptyList(),
+            dependencies = emptyList(),
+            products = listOf(createTestProduct("12345")),
+        )
+
+        assertFalse(parser.hasDLC(manifest))
+    }
+
+    @Test
+    fun testBuildChunkUrlMap() {
+        val chunks = listOf("aabbccdd11223344", "11223344aabbccdd")
+        val baseUrls = listOf("https://cdn.gog.com/content")
+
+        val result = parser.buildChunkUrlMap(chunks, baseUrls)
+
+        assertEquals(2, result.size)
+        assertEquals("https://cdn.gog.com/content/aa/bb/aabbccdd11223344", result["aabbccdd11223344"])
+        assertEquals("https://cdn.gog.com/content/11/22/11223344aabbccdd", result["11223344aabbccdd"])
+    }
+
+    @Test
+    fun testBuildChunkUrlMap_emptyUrls() {
+        val result = parser.buildChunkUrlMap(listOf("hash"), emptyList())
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun testBuildChunkUrlMap_shortHash() {
+        val chunks = listOf("abc")
+        val baseUrls = listOf("https://cdn.gog.com")
+
+        val result = parser.buildChunkUrlMap(chunks, baseUrls)
+
+        assertEquals("https://cdn.gog.com/abc", result["abc"])
+    }
+
+    @Test
+    fun testBuildChunkUrlMap_insertsChunkPathBeforeQueryToken() {
+        val chunks = listOf("aabbccdd11223344")
+        val baseUrls = listOf("https://cdn.gog.com/store/1451150270?__token__=exp=123~acl=*")
+
+        val result = parser.buildChunkUrlMap(chunks, baseUrls)
+
+        assertEquals(
+            "https://cdn.gog.com/store/1451150270/aa/bb/aabbccdd11223344?__token__=exp=123~acl=*",
+            result["aabbccdd11223344"],
+        )
+    }
+
+    @Test
+    fun testBuildChunkUrlMapWithProducts() {
+        val chunks = listOf("aabbccdd11223344", "11223344aabbccdd")
+        val chunkToProductMap = mapOf(
+            "aabbccdd11223344" to "12345",
+            "11223344aabbccdd" to "67890"
+        )
+        val productUrlMap = mapOf(
+            "12345" to listOf("https://cdn1.gog.com/product1"),
+            "67890" to listOf("https://cdn2.gog.com/product2")
+        )
+
+        val result = parser.buildChunkUrlMapWithProducts(chunks, chunkToProductMap, productUrlMap)
+
+        assertEquals(2, result.size)
+        assertEquals("https://cdn1.gog.com/product1/aa/bb/aabbccdd11223344", result["aabbccdd11223344"])
+        assertEquals("https://cdn2.gog.com/product2/11/22/11223344aabbccdd", result["11223344aabbccdd"])
+    }
+
+    @Test
+    fun testBuildChunkUrlMapWithProducts_missingProduct() {
+        val chunks = listOf("aabbccdd11223344")
+        val chunkToProductMap = mapOf("aabbccdd11223344" to "12345")
+        val productUrlMap = emptyMap<String, List<String>>()
+
+        val result = parser.buildChunkUrlMapWithProducts(chunks, chunkToProductMap, productUrlMap)
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun testBuildChunkUrlMapWithProducts_insertsChunkPathBeforeQueryToken() {
+        val chunks = listOf("aabbccdd11223344")
+        val chunkToProductMap = mapOf("aabbccdd11223344" to "12345")
+        val productUrlMap = mapOf(
+            "12345" to listOf("https://cdn.gog.com/store/1451150270?__token__=exp=123~acl=*")
+        )
+
+        val result = parser.buildChunkUrlMapWithProducts(chunks, chunkToProductMap, productUrlMap)
+
+        assertEquals(
+            "https://cdn.gog.com/store/1451150270/aa/bb/aabbccdd11223344?__token__=exp=123~acl=*",
+            result["aabbccdd11223344"],
+        )
+    }
+
+    @Test
+    fun testExtractChunkHashes_preservesOrder() {
+        val chunk1 = createTestChunk("aaaa")
+        val chunk2 = createTestChunk("bbbb")
+        val chunk3 = createTestChunk("cccc")
+        val file1 = createTestDepotFile(chunks = listOf(chunk1, chunk2))
+        val file2 = createTestDepotFile(chunks = listOf(chunk3))
+
+        val result = parser.extractChunkHashes(listOf(file1, file2))
+
+        assertEquals(listOf("aaaa", "bbbb", "cccc"), result)
+    }
+
+    @Test
+    fun testExtractChunkHashes_removesDuplicates() {
+        val chunk1 = createTestChunk("aaaa")
+        val chunk2 = createTestChunk("aaaa") // duplicate
+        val file = createTestDepotFile(chunks = listOf(chunk1, chunk2))
+
+        val result = parser.extractChunkHashes(listOf(file))
+
+        assertEquals(1, result.size)
+        assertEquals("aaaa", result[0])
+    }
+
+    @Test
+    fun testDetectGeneration() {
+        val gen2Build = createTestBuild(generation = 2)
+        assertEquals(2, parser.detectGeneration(gen2Build))
+
+        val gen1Build = createTestBuild(generation = 1)
+        assertEquals(1, parser.detectGeneration(gen1Build))
+    }
+
+    // ========== JSON Parsing Tests ==========
+
+    @Test
+    fun testParseBuilds() {
+        val json = """
+            {
+                "total_count": 1,
+                "count": 1,
+                "items": [{
+                    "build_id": "123",
+                    "product_id": "456",
+                    "os": "windows",
+                    "generation": 2,
+                    "version_name": "1.0",
+                    "branch": "master",
+                    "link": "https://cdn.gog.com/manifest"
+                }]
+            }
+        """.trimIndent()
+
+        val result = parser.parseBuilds(json)
+
+        assertEquals(1, result.totalCount)
+        assertEquals(1, result.count)
+        assertEquals(1, result.items.size)
+        assertEquals("123", result.items[0].buildId)
+        assertEquals(2, result.items[0].generation)
+        assertEquals("456", result.items[0].productId)
+    }
+
+    @Test
+    fun testParseManifest() {
+        val json = """
+            {
+                "baseProductId": "12345",
+                "installDirectory": "game",
+                "depots": [],
+                "dependencies": [],
+                "products": [{
+                    "productId": "12345",
+                    "name": "Test Game"
+                }]
+            }
+        """.trimIndent()
+
+        val result = parser.parseManifest(json)
+
+        assertEquals("12345", result.baseProductId)
+        assertEquals("game", result.installDirectory)
+        assertEquals(1, result.products.size)
+    }
+
+    @Test
+    fun testParseDepotManifest() {
+        val json = """
+            {
+                "depot": {
+                    "items": [
+                        {
+                            "type": "DepotFile",
+                            "path": "game.exe",
+                            "chunks": [],
+                            "flags": []
+                        }
+                    ]
+                }
+            }
+        """.trimIndent()
+
+        val result = parser.parseDepotManifest(json)
+
+        assertEquals(1, result.files.size)
+        assertEquals("game.exe", result.files[0].path)
+    }
+
+    @Test
+    fun testParseDependencyManifest() {
+        val json = """
+            {
+                "depots": [{
+                    "dependencyId": "vcredist2015",
+                    "manifest": "manifest_url",
+                    "compressedSize": 1000,
+                    "size": 2000,
+                    "languages": ["*"],
+                    "readableName": "Visual C++ 2015",
+                    "signature": "sig123",
+                    "internal": false
+                }]
+            }
+        """.trimIndent()
+
+        val result = parser.parseDependencyManifest(json)
+
+        assertEquals(1, result.depots.size)
+        assertEquals("vcredist2015", result.depots[0].dependencyId)
+        assertEquals("Visual C++ 2015", result.depots[0].readableName)
+    }
+
+    @Test
+    fun testParseSecureLinks() {
+        val json = """
+            {
+                "urls": [{
+                    "url_format": "https://secure-cdn.gog.com/{path}?token={token}",
+                    "parameters": {
+                        "path": "content",
+                        "token": "xyz123"
+                    }
+                }]
+            }
+        """.trimIndent()
+
+        val result = parser.parseSecureLinks(json)
+
+        assertEquals(1, result.urls.size)
+        assertTrue(result.urls[0].contains("secure-cdn.gog.com"))
+        assertTrue(result.urls[0].contains("xyz123"))
+    }
+
+    // ========== Decompression Tests ==========
+
+    @Test
+    fun testDecompressManifest_gzip() {
+        val plainText = "Hello GOG World"
+        val compressed = ByteArrayOutputStream().use { baos ->
+            GZIPOutputStream(baos).use { gzipOut ->
+                gzipOut.write(plainText.toByteArray())
+            }
+            baos.toByteArray()
+        }
+
+        val result = parser.decompressManifest(compressed)
+
+        assertEquals(plainText, result)
+    }
+
+    @Test
+    fun testDecompressManifest_zlib() {
+        val plainText = "Hello GOG World"
+        val compressed = ByteArrayOutputStream().use { baos ->
+            val deflater = Deflater()
+            try {
+                val buffer = ByteArray(1024)
+                deflater.setInput(plainText.toByteArray())
+                deflater.finish()
+                while (!deflater.finished()) {
+                    val count = deflater.deflate(buffer)
+                    baos.write(buffer, 0, count)
+                }
+            } finally {
+                deflater.end()
+            }
+            baos.toByteArray()
+        }
+
+        val result = parser.decompressManifest(compressed)
+
+        assertEquals(plainText, result)
+    }
+
+    @Test
+    fun testDecompressManifest_plainText() {
+        val plainText = "Hello GOG World"
+        val result = parser.decompressManifest(plainText.toByteArray())
+        assertEquals(plainText, result)
+    }
+
+    @Test
+    fun testParseManifestV1_handlesGen1AndLanguageNormalization() {
+        val json = JSONObject().apply {
+            put("product", JSONObject().apply {
+                put("installDirectory", "Beyond Good and Evil")
+                put("rootGameID", "1207658746")
+                put("timestamp", "27565470")
+                put("depots", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("gameIDs", JSONArray().put("1207658746"))
+                        put("languages", JSONArray().put("Neutral"))
+                        put("manifest", "b974058a-6dc2-41a3-b886-295a7b82a251")
+                        put("size", 12345L)
+                    })
+                    put(JSONObject().apply {
+                        put("gameIDs", JSONArray().put("1207658746"))
+                        put("languages", JSONArray().put("en-US"))
+                        put("manifest", "494a4547-48ea-40c0-ad21-b96ab8fa8cba")
+                        put("size", 67890L)
+                    })
+                })
+                put("gameIDs", JSONArray().put(JSONObject().apply {
+                    put("gameID", "1207658746")
+                    put("name", JSONObject().put("en", "Beyond Good and Evil"))
+                }))
+            })
+        }
+        val result = parser.parseManifestV1(json)
+        assertEquals("Beyond Good and Evil", result.installDirectory)
+        assertEquals("1207658746", result.baseProductId)
+        assertEquals("27565470", result.productTimestamp)
+        assertEquals(2, result.depots.size)
+        assertEquals(listOf("*"), result.depots[0].languages)
+        assertTrue(result.depots[1].languages.contains("en-US"))
+        assertEquals(1, result.products.size)
+        assertEquals("1207658746", result.products[0].productId)
+    }
+
+    @Test
+    fun testParseManifestV1_emptyLanguagesBecomesWildcard() {
+        val json = JSONObject().apply {
+            put("product", JSONObject().apply {
+                put("installDirectory", "Game")
+                put("rootGameID", "1")
+                put("timestamp", "1")
+                put("depots", JSONArray().put(JSONObject().apply {
+                    put("gameIDs", JSONArray().put("1"))
+                    put("manifest", "abc")
+                    put("size", 0L)
+                }))
+                put("gameIDs", JSONArray())
+            })
+        }
+        val result = parser.parseManifestV1(json)
+        assertEquals(1, result.depots.size)
+        assertEquals(listOf("*"), result.depots[0].languages)
+    }
+
+    @Test
+    fun testParseV1DepotManifest_filtersDirectories() {
+        val json = """
+            {"depot":{"files":[
+                {"path":"game.exe","hash":"abc123","size":100,"offset":0},
+                {"directory":true,"path":"data"},
+                {"path":"readme.txt","hash":"def","size":10,"offset":100}
+            ]}}
+        """.trimIndent()
+        val result = parser.parseV1DepotManifest(json)
+        assertEquals(2, result.size)
+        assertEquals("game.exe", result[0].path)
+        assertEquals("abc123", result[0].hash)
+        assertEquals(100L, result[0].size)
+        assertEquals(0L, result[0].offset)
+        assertEquals("readme.txt", result[1].path)
+    }
+
+    @Test
+    fun testParseV1DepotManifest_emptyFilesReturnsEmpty() {
+        val result = parser.parseV1DepotManifest("{}")
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun testParseV1DepotManifest_missingHashDefaultsToEmpty() {
+        val json = """{"files":[{"path":"file.bin","size":5,"offset":0}]}"""
+        val result = parser.parseV1DepotManifest(json)
+        assertEquals(1, result.size)
+        assertEquals("", result[0].hash)
+        assertEquals(5L, result[0].size)
+    }
+
+    private data class Entry(val path: String, val productId: String, val hasChunks: Boolean = true)
+
+    private fun effective(entries: List<Entry>, baseIds: Set<String> = setOf("base")) =
+        GOGManifestParser.effectiveEntries(
+            entries,
+            path = { it.path },
+            isBase = { it.productId in baseIds },
+            hasContent = { it.hasChunks },
+        )
+
+    @Test
+    fun testEffectiveEntries_dlcReplacesBaseFile() {
+        val base = Entry("Data/BasicData.wolf", "base")
+        val dlc = Entry("Data/BasicData.wolf", "dlc")
+        assertEquals(listOf(dlc), effective(listOf(base, dlc)))
+    }
+
+    @Test
+    fun testEffectiveEntries_dlcWinsEvenWhenListedFirst() {
+        val dlc = Entry("subako.exe", "dlc")
+        val base = Entry("subako.exe", "base")
+        assertEquals(listOf(dlc), effective(listOf(dlc, base)))
+    }
+
+    @Test
+    fun testEffectiveEntries_pathsCompareCaseAndSeparatorInsensitive() {
+        val base = Entry("Data/Map.wolf", "base")
+        val dlc = Entry("\\data\\MAP.WOLF", "dlc")
+        assertEquals(listOf(dlc), effective(listOf(base, dlc)))
+    }
+
+    @Test
+    fun testEffectiveEntries_withoutDlcBaseFilesStay() {
+        val exe = Entry("Game.exe", "base")
+        val data = Entry("Data/Map.wolf", "base")
+        val entries = listOf(exe, data)
+        assertEquals(entries, effective(entries))
+    }
+
+    @Test
+    fun testEffectiveEntries_sameClassDuplicatesKeepLastInListOrder() {
+        val languageDepot = Entry("Data/Text.wolf", "base")
+        val neutralDepot = Entry("data/text.wolf", "base")
+        assertEquals(listOf(neutralDepot), effective(listOf(languageDepot, neutralDepot)))
+    }
+
+    @Test
+    fun testEffectiveEntries_laterDlcWins() {
+        val base = Entry("Data/Map.wolf", "base")
+        val earlier = Entry("Data/Map.wolf", "dlc1")
+        val later = Entry("Data/Map.wolf", "dlc2")
+        assertEquals(listOf(later), effective(listOf(base, earlier, later)))
+    }
+
+    @Test
+    fun testEffectiveEntries_chunklessEntryNeverReplacesContent() {
+        val base = Entry("subako.exe", "base")
+        val dlc = Entry("subako.exe", "dlc", hasChunks = false)
+        assertEquals(listOf(base), effective(listOf(base, dlc)))
+    }
+
+    @Test
+    fun testEffectiveEntries_chunklessEntriesFollowDlcRule() {
+        val base = Entry("empty.txt", "base", hasChunks = false)
+        val dlc = Entry("empty.txt", "dlc", hasChunks = false)
+        assertEquals(listOf(dlc), effective(listOf(dlc, base)))
+    }
+
+    @Test
+    fun testEffectiveEntries_nonCollidingFilesUntouched() {
+        val baseExe = Entry("Game.exe", "base")
+        val baseData = Entry("Data/Map.wolf", "base")
+        val dlcData = Entry("Data/Map.wolf", "dlc")
+        val dlcExtra = Entry("Data/Extra.wolf", "dlc")
+        assertEquals(listOf(baseExe, dlcData, dlcExtra), effective(listOf(baseExe, baseData, dlcData, dlcExtra)))
+    }
+
+    @Test
+    fun testWithoutDepotFiles_dropsOnlyListedFileOrdinals() {
+        val json = """
+            {"depot":{"items":[
+                {"type":"DepotFile","path":"a.bin","chunks":[{"compressedMd5":"aa","md5":"aa","size":1}]},
+                {"type":"DepotDirectory","path":"dir"},
+                {"type":"DepotFile","path":"b.bin","chunks":[{"compressedMd5":"bb","md5":"bb","size":1}]},
+                {"type":"DepotFile","path":"c.bin","chunks":[{"compressedMd5":"cc","md5":"cc","size":1}]}
+            ]}}
+        """.trimIndent()
+        val filtered = parser.parseDepotManifest(GOGManifestParser.withoutDepotFiles(json, setOf(1)))
+        assertEquals(listOf("a.bin", "c.bin"), filtered.files.map { it.path })
+        assertEquals(1, filtered.directories.size)
+        assertSame(json, GOGManifestParser.withoutDepotFiles(json, emptySet()))
+    }
+
+    @Test
+    fun testIsSafeRelativePath_rejectsPathsLeavingInstallDir() {
+        assertTrue(GOGManifestParser.isSafeRelativePath("Data/Map.wolf"))
+        assertTrue(GOGManifestParser.isSafeRelativePath("./Data/Map.wolf"))
+        assertTrue(GOGManifestParser.isSafeRelativePath("Data\\Map.wolf"))
+        assertFalse(GOGManifestParser.isSafeRelativePath(""))
+        assertFalse(GOGManifestParser.isSafeRelativePath("/abs/file"))
+        assertFalse(GOGManifestParser.isSafeRelativePath("../file"))
+        assertFalse(GOGManifestParser.isSafeRelativePath("a/../../file"))
+        assertFalse(GOGManifestParser.isSafeRelativePath("a\\..\\file"))
+        assertFalse(GOGManifestParser.isSafeRelativePath("a/b\u0000c"))
+    }
+
+    @Test
+    fun testIsPlannable_needsSafePathAndHashedChunk() {
+        fun file(path: String, vararg chunks: FileChunk) =
+            DepotFile(path = path, chunks = chunks.toList(), md5 = null, sha256 = null, flags = emptyList(), productId = null)
+        val hashed = FileChunk(compressedMd5 = "aa", md5 = "", size = 1, compressedSize = 1)
+        val decompressedOnly = FileChunk(compressedMd5 = "", md5 = "bb", size = 1, compressedSize = null)
+        val noHash = FileChunk(compressedMd5 = "", md5 = "", size = 1, compressedSize = null)
+        assertTrue(GOGManifestParser.isPlannable(file("a.bin", hashed)))
+        assertTrue(GOGManifestParser.isPlannable(file("a.bin", noHash, decompressedOnly)))
+        assertFalse(GOGManifestParser.isPlannable(file("a.bin")))
+        assertFalse(GOGManifestParser.isPlannable(file("a.bin", noHash)))
+        assertFalse(GOGManifestParser.isPlannable(file("../a.bin", hashed)))
+    }
+}
