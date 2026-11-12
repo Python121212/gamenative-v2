@@ -5,6 +5,7 @@ Google Drive はファイルシステムではなくオブジェクトストレ�
 直接渡すことはできません。そのため **「書き終えたファイル / フォルダー」を順番に
 アップロードする** 方式にしています。
 
+- **ビルド時に何も設定しなくても有効**（OAuth クライアントIDは `app/build.gradle.kts` の既定値）
 - 1アカウントあたり **15 GB**（無料枠）を上限として扱う
 - **複数アカウントを登録可能**。合計容量は `15 GB × アカウント数`
 - アップロードは **直列キュー**（`DriveUploadQueue`）。同時アップロードはしない
@@ -68,7 +69,36 @@ DriveAutoBackup.enqueueIfEnabled(context, finishedFile)
 - 取得した **リフレッシュトークン** でバックグラウンドのアップロードを継続
 - リフレッシュトークンはアプリ専用領域の `drive_pseudo_ssd.json` にのみ保存
 
-## 事前準備（Google Cloud / OAuth）— 1回だけ
+## ビルド設定（既定で有効・通常は何もしなくてよい）
+
+クライアントIDは `app/build.gradle.kts` に**既定値**として入っている。
+
+```kotlin
+val defaultDriveOauthClientId = "1065217572613-…apps.googleusercontent.com"
+
+val driveOauthClientId: String = configValue("GOOGLE_OAUTH_CLIENT_ID")
+    .ifEmpty { defaultDriveOauthClientId }
+```
+
+そのため、CI でも Android Studio でも `local.properties` を書かずにそのまま使える。
+差し替えたいときだけ、次のどれかで上書きする（`configValue` の優先順）。
+
+| 方法 | 例 |
+|---|---|
+| Gradle プロパティ | `./gradlew :app:assembleLegacyDebug -PGOOGLE_OAUTH_CLIENT_ID=xxx.apps.googleusercontent.com` |
+| 環境変数 | `GOOGLE_OAUTH_CLIENT_ID=xxx.apps.googleusercontent.com ./scripts/apk.sh` |
+| `local.properties` | `GOOGLE_OAUTH_CLIENT_ID=xxx.apps.googleusercontent.com` |
+| GitHub Actions | Secrets の `GOOGLE_OAUTH_CLIENT_ID` |
+
+> **クライアントIDはビルド時に埋め込む必要があります。**
+> リダイレクトのスキーム名がクライアントIDから決まるため、後からアプリ内で
+> 貼り付ける方式は使えません。ID を変えたら**再ビルド**してください
+> （`generateDriveOauthConfig` は ID を入力として宣言しているので、確実に再生成されます）。
+
+### 既定のクライアントIDを使う場合に必要なこと（Google Cloud 側・1回だけ）
+
+既定値はこのリポジトリ用に発行済みのクライアントなので、**Google Cloud 側の設定は不要**。
+自分のプロジェクトのクライアントに差し替えるときだけ、次を行う。
 
 1. Google Cloud Console でプロジェクトを作成
 2. **Google Drive API** を有効化
@@ -76,17 +106,10 @@ DriveAutoBackup.enqueueIfEnabled(context, finishedFile)
 4. **認証情報 → OAuth クライアント ID → アプリの種類: Android** を作成
    - パッケージ名: `app.gamenative`
    - SHA-1: ビルドした APK の署名証明書フィンガープリント
-5. 発行された **クライアントID** をビルドに設定
-   ```
-   # local.properties
-   GOOGLE_OAUTH_CLIENT_ID=xxxxxxxx.apps.googleusercontent.com
-   ```
-   GitHub Actions の場合は Secrets の `GOOGLE_OAUTH_CLIENT_ID` に登録すれば
-   ビルド時に自動で埋め込まれます。
+5. 発行されたクライアントIDを上表のいずれかで渡して再ビルド
 
-> **クライアントIDはビルド時に埋め込む必要があります。**
-> リダイレクトのスキーム名がクライアントIDから決まるため、後からアプリ内で
-> 貼り付ける方式は使えません。
+> 既定値を使っていても、**同意画面がテスト状態なら「テストユーザー」に追加した
+> アカウントしかログインできません**。誰でも使えるようにするには同意画面を本番にする。
 
 ### SHA-1 の確認方法
 
@@ -136,7 +159,7 @@ APK の SHA-1 をログに出力します。
 
 | 表示 | 原因 | 対処 |
 |---|---|---|
-| `このビルドには OAuth クライアントIDが入っていません` | ビルド時に `GOOGLE_OAUTH_CLIENT_ID` が渡されていない | `local.properties` か GitHub Secrets に設定して**再ビルド**（アプリ内では設定できない） |
+| `このビルドには OAuth クライアントIDが入っていません` | `GOOGLE_OAUTH_CLIENT_ID` を空文字で上書きした、または既定値を持たない古いブランチのビルド | 値を消して**再ビルド**（既定値が使われる）。アプリ内では設定できない |
 | `ログインに失敗しました: access_denied` | OAuth 同意画面でスコープ `drive.file` が未設定、またはテスト状態で自分のアカウントが「テストユーザー」に入っていない | 同意画面を確認。テスト中は使うアカウントをテストユーザーに追加 |
 | `ログインに失敗しました: invalid_request` / `DEVELOPER_ERROR` | OAuth クライアントの **パッケージ名**（`app.gamenative`）か **SHA-1** が APK と一致していない | 登録値を APK の署名と突き合わせる（下記コマンド） |
 | ブラウザに「このアプリは Google の確認を受けていません」 | 同意画面が未審査（制限付きスコープ） | 「詳細」→「（安全でないページに）移動」で続行。常用するなら本番公開へ |

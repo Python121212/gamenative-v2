@@ -141,6 +141,35 @@ jobs:
       - name: List APKs
         run: find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
 
+      # Drive pseudo-SSD のログインに必要な OAuth クライアントIDは APK に埋め込まれる。
+      # 既定値で必ず入るはずなので、抜けたら失敗させる（設定漏れの回帰防止）。
+      - name: Verify Drive OAuth client is baked in
+        if: success()
+        run: |
+          APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::APK が見つかりません"
+            exit 1
+          fi
+          CONFIG=$(unzip -p "$APK" assets/drive_oauth.json 2>/dev/null | tr -d '\r\n')
+          echo "assets/drive_oauth.json = ${CONFIG:-<missing>}"
+          case "$CONFIG" in
+            *".apps.googleusercontent.com"*) echo "::notice::Drive OAuth client: $CONFIG" ;;
+            *)
+              echo "::error::Drive の OAuth クライアントIDが APK に入っていません: ${CONFIG:-missing}"
+              exit 1
+              ;;
+          esac
+          # リダイレクト用のカスタムスキームがマニフェストに入っているかも確認する。
+          AAPT2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)
+          if [ -n "$AAPT2" ]; then
+            if "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml 2>/dev/null | grep -q "googleusercontent"; then
+              echo "::notice::redirect scheme is declared in the manifest"
+            else
+              echo "::warning::マニフェストに googleusercontent スキームが見つかりません"
+            fi
+          fi
+
       # The signature must be the same for every CI build, otherwise updating an
       # installed APK fails with "app not installed" (INSTALL_FAILED_UPDATE_INCOMPATIBLE).
       # It also identifies the "Android" OAuth client used by the Drive pseudo-SSD.
