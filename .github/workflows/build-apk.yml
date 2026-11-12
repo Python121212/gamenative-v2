@@ -77,8 +77,8 @@ jobs:
         if: failure()
         run: |
           if [ ! -f gradle-build.log ]; then exit 0; fi
-          grep -E "^(e: |w: .*error)|error:|Could not resolve|FAILURE:|> Task .* FAILED" gradle-build.log \
-            | head -n 40 \
+          grep -E "^(e: )|error:|Could not resolve|Could not find|Could not GET|Required by:|No matching variant|com\.google|com\.android\.gms|FAILURE:|> Task .* FAILED" gradle-build.log \
+            | head -n 60 \
             | while IFS= read -r line; do
                 escaped=$(printf '%s' "$line" | tr '%\r\n' '   ')
                 echo "::error::$escaped"
